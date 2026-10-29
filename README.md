@@ -100,4 +100,6 @@ GitHub Actions 已配置类型检查、两端构建及后端集成测试；推�
 
 后续按“账号与店铺 → 商品管理 → 收藏 → 下单与库存 → 支付回调”的顺序推进。模块边界与数据约定见 [架构说明](docs/architecture.md)。
 
+两人协作分工、交易 MVP 范围、6–8 周周期估算及阶段验收见 [开发规划](docs/development-plan.md)。
+
 停止本项目依赖可运行 `docker compose stop`，数据保存在项目命名卷中。不要将 `.env`、构建缓存或第三方密钥提交到 Git。
