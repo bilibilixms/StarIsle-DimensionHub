@@ -147,3 +147,11 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Project-local toolchains and build output
+.tools/
+target/
+.idea/
+*.iml
+.DS_Store
+project.private.config.json

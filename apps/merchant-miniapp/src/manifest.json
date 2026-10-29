@@ -1,0 +1,23 @@
+{
+  "name": "星屿商家",
+  "appid": "",
+  "description": "星屿二次元社区与交易平台",
+  "versionName": "0.1.0",
+  "versionCode": "100",
+  "vueVersion": "3",
+  "mp-weixin": {
+    "appid": "touristappid",
+    "setting": {
+      "urlCheck": true
+    },
+    "usingComponents": true
+  },
+  "h5": {
+    "router": {
+      "mode": "hash"
+    }
+  },
+  "uniStatistics": {
+    "enable": false
+  }
+}
