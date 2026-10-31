@@ -3,8 +3,8 @@ import { defineConfig } from '@playwright/test'
 export default defineConfig({
   testDir: './tests/e2e',
   outputDir: '.tools/test-results',
-  fullyParallel: true,
-  workers: 2,
+  fullyParallel: false,
+  workers: 1,
   timeout: 30000,
   reporter: [['list'], ['html', { outputFolder: '.tools/playwright-report', open: 'never' }]],
   use: {
@@ -17,6 +17,13 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: [
+    {
+      command:
+        'node --experimental-strip-types scripts/demo-server.mjs --data .tools/test-demo/marketplace.json',
+      url: 'http://127.0.0.1:8787/health',
+      reuseExistingServer: false,
+      timeout: 15000,
+    },
     {
       command:
         'python3 -m http.server 4173 --bind 127.0.0.1 --directory apps/user-miniapp/dist/build/h5',

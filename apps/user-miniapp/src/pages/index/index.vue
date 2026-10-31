@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { onLoad, onShow } from '@dcloudio/uni-app'
+import { onLoad } from '@dcloudio/uni-app'
 import AppHeader from '@starisle/ui/AppHeader.vue'
 import BottomNav from '@starisle/ui/BottomNav.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
 import Icon from '@starisle/ui/Icon.vue'
-import { getDemoState } from '@starisle/shared/demo'
+import SyncStatus from '@starisle/ui/SyncStatus.vue'
+import { useDemoSync } from '@starisle/ui/useDemoSync'
 import HomeContent from '../../components/HomeContent.vue'
 import CartContent from '../../components/CartContent.vue'
 import ProfileContent from '../../components/ProfileContent.vue'
 
-const state = ref(getDemoState())
+const { state, refresh, sync, syncError, connected, syncing } = useDemoSync()
 const tab = ref('home')
 const messages = ref(false)
 const read = ref(false)
@@ -18,9 +19,6 @@ const cartCount = computed(() => state.value.cart.reduce((sum, item) => sum + it
 const title = computed(() =>
   tab.value === 'cart' ? '购物车' : tab.value === 'profile' ? '我的小岛' : '星屿',
 )
-function refresh() {
-  state.value = getDemoState()
-}
 function changeTab(value: string) {
   tab.value = value
   uni.pageScrollTo({ scrollTop: 0, duration: 0 })
@@ -30,7 +28,6 @@ onLoad((query) => {
   if (query?.tab && ['home', 'discover', 'cart', 'profile'].includes(query.tab))
     tab.value = query.tab
 })
-onShow(refresh)
 </script>
 
 <template>
@@ -41,6 +38,7 @@ onShow(refresh)
       badge
       @message="messages = true"
     />
+    <SyncStatus :connected="connected" :syncing="syncing" :error="syncError" @retry="sync" />
     <HomeContent
       v-if="tab === 'home' || tab === 'discover'"
       :state="state"

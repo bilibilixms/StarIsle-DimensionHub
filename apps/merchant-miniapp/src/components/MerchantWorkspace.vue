@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import SyncStatus from '@starisle/ui/SyncStatus.vue'
+import { useDemoSync } from '@starisle/ui/useDemoSync'
 import AppHeader from '@starisle/ui/AppHeader.vue'
 import BottomNav from '@starisle/ui/BottomNav.vue'
 import Icon from '@starisle/ui/Icon.vue'
@@ -10,9 +11,7 @@ import {
   DEMO_ASSETS,
   editDemoProduct,
   editDemoShop,
-  getDemoState,
   money,
-  refundDemoOrder,
   resetDemoState,
   shipDemoOrder,
   toggleDemoProduct,
@@ -20,12 +19,16 @@ import {
   type DemoProduct,
 } from '@starisle/shared/demo'
 
-const state = ref(getDemoState())
+const { state, sync, syncError, connected, syncing } = useDemoSync('merchant')
+const busy = ref(false)
 const tab = ref('home')
 const status = ref('待发货')
 const productFilter = ref('全部')
 const sheet = ref<'ship' | 'order' | 'product' | 'shop' | 'message' | ''>('')
-const activeOrder = ref<DemoOrder | null>(null)
+const activeOrderId = ref('')
+const activeOrder = computed(
+  () => state.value.merchantOrders.find((order) => order.id === activeOrderId.value) || null,
+)
 const carrier = ref('顺丰速运')
 const tracking = ref('')
 const error = ref('')
@@ -45,13 +48,11 @@ const title = computed(
 const waiting = computed(
   () => state.value.merchantOrders.filter((order) => order.status === '待发货').length,
 )
-const refunds = computed(
-  () => state.value.merchantOrders.filter((order) => order.status === '退款中').length,
+const completed = computed(
+  () => state.value.merchantOrders.filter((order) => order.status === '已完成').length,
 )
 const revenue = computed(() =>
-  state.value.merchantOrders
-    .filter((order) => !['退款中', '已退款'].includes(order.status))
-    .reduce((sum, order) => sum + order.amount, 0),
+  state.value.merchantOrders.reduce((sum, order) => sum + order.amount, 0),
 )
 const published = computed(() => state.value.products.filter((product) => product.published).length)
 const visibleOrders = computed(() =>
@@ -66,17 +67,13 @@ const visibleProducts = computed(() =>
   ),
 )
 function inspectOrder(order: DemoOrder) {
-  activeOrder.value = order
+  activeOrderId.value = order.id
   sheet.value = 'order'
 }
 function viewWaitingOrders() {
   sheet.value = ''
   orders('待发货')
 }
-function refresh() {
-  state.value = getDemoState()
-}
-onShow(refresh)
 function changeTab(value: string) {
   tab.value = value
   if (value === 'orders') status.value = '全部'
@@ -88,37 +85,24 @@ function orders(value: string) {
   uni.pageScrollTo({ scrollTop: 0, duration: 0 })
 }
 function openShip(order: DemoOrder) {
-  activeOrder.value = order
+  activeOrderId.value = order.id
   carrier.value = '顺丰速运'
   tracking.value = ''
   error.value = ''
   sheet.value = 'ship'
 }
-function ship() {
+async function ship() {
+  if (busy.value) return
+  busy.value = true
   try {
-    state.value = shipDemoOrder(activeOrder.value!.id, carrier.value, tracking.value)
+    state.value = await shipDemoOrder(activeOrder.value!.id, carrier.value, tracking.value)
     sheet.value = ''
     uni.showToast({ title: '模拟发货成功', icon: 'success' })
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '请稍后重试'
+  } finally {
+    busy.value = false
   }
-}
-function refund(order: DemoOrder) {
-  uni.showModal({
-    title: '确认模拟退款',
-    content: `为订单 ${order.id} 全额退款 ¥${money(order.amount)}。仅修改本地演示状态，不会发生实际资金变动。`,
-    confirmText: '模拟退款',
-    confirmColor: '#d9985d',
-    success(result) {
-      if (!result.confirm) return
-      try {
-        state.value = refundDemoOrder(order.id)
-        uni.showToast({ title: '模拟退款完成', icon: 'success' })
-      } catch (cause) {
-        uni.showToast({ title: cause instanceof Error ? cause.message : '操作失败', icon: 'none' })
-      }
-    },
-  })
 }
 function editProduct(product?: DemoProduct) {
   productId.value = product?.id || ''
@@ -129,11 +113,18 @@ function editProduct(product?: DemoProduct) {
   error.value = ''
   sheet.value = 'product'
 }
-function saveProduct() {
+async function saveProduct() {
+  if (busy.value) return
+  busy.value = true
   try {
     state.value = productId.value
-      ? editDemoProduct(productId.value, productTitle.value, productPrice.value, productStock.value)
-      : createDemoProduct(
+      ? await editDemoProduct(
+          productId.value,
+          productTitle.value,
+          productPrice.value,
+          productStock.value,
+        )
+      : await createDemoProduct(
           productTitle.value,
           productPrice.value,
           productStock.value,
@@ -143,6 +134,8 @@ function saveProduct() {
     uni.showToast({ title: productId.value ? '好物已更新' : '新品已上架', icon: 'success' })
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '保存失败'
+  } finally {
+    busy.value = false
   }
 }
 function openShop() {
@@ -151,30 +144,54 @@ function openShop() {
   error.value = ''
   sheet.value = 'shop'
 }
-function saveShop() {
+async function saveShop() {
+  if (busy.value) return
+  busy.value = true
   try {
-    state.value = editDemoShop(shopName.value, shopDescription.value)
+    state.value = await editDemoShop(shopName.value, shopDescription.value)
     sheet.value = ''
     uni.showToast({ title: '店铺资料已保存', icon: 'success' })
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '保存失败'
+  } finally {
+    busy.value = false
   }
 }
 function reset() {
   uni.showModal({
     title: '重置演示数据',
-    content: '恢复本机的初始商品、订单和店铺资料。',
+    content: '恢复共享商品和店铺资料，并清空用户端与商家端的全部演示订单。此操作会影响两端。',
     confirmColor: '#d9985d',
-    success(result) {
-      if (result.confirm) state.value = resetDemoState()
+    async success(result) {
+      if (!result.confirm || busy.value) return
+      busy.value = true
+      try {
+        state.value = await resetDemoState()
+      } catch (cause) {
+        uni.showToast({ title: cause instanceof Error ? cause.message : '重置失败', icon: 'none' })
+      } finally {
+        busy.value = false
+      }
     },
   })
+}
+async function toggleProduct(id: string) {
+  if (busy.value) return
+  busy.value = true
+  try {
+    state.value = await toggleDemoProduct(id)
+  } catch (cause) {
+    uni.showToast({ title: cause instanceof Error ? cause.message : '操作失败', icon: 'none' })
+  } finally {
+    busy.value = false
+  }
 }
 </script>
 
 <template>
   <view class="app-screen merchant-screen">
     <AppHeader :title="title" badge @message="sheet = 'message'" />
+    <SyncStatus :connected="connected" :syncing="syncing" :error="syncError" @retry="sync" />
     <view class="workspace-body">
       <template v-if="tab === 'home'">
         <view class="shop-banner">
@@ -207,7 +224,7 @@ function reset() {
         <view class="overview">
           <view class="section-heading">
             <view class="overview-heading">
-              <text>今日概览</text>
+              <text>经营概览</text>
               <view class="overview-dot" />
               <text class="overview-label">小店的每一份进步</text>
             </view>
@@ -228,7 +245,7 @@ function reset() {
                 {{ money(revenue) }}
               </text>
               <text class="metric-label">有效成交额</text>
-              <text class="metric-detail">已排除退款订单</text>
+              <text class="metric-detail">模拟支付成功订单</text>
             </view>
             <view>
               <text class="metric-value">{{ published }}</text>
@@ -263,7 +280,7 @@ function reset() {
             <view class="heading-accent" />
             <text>小店待办</text>
           </view>
-          <text class="todo-total">还有 {{ waiting + refunds }} 件事等你处理</text>
+          <text class="todo-total">还有 {{ waiting }} 件事等你处理</text>
         </view>
         <view class="todo-card">
           <button class="todo-row" @click="orders('待发货')" data-testid="waiting-orders">
@@ -272,10 +289,10 @@ function reset() {
             <text class="todo-count">{{ waiting }}</text>
             <Icon name="chevron-right" :size="13" />
           </button>
-          <button class="todo-row" @click="orders('退款中')">
-            <view class="todo-icon pink"><Icon name="refund" tone="pink" :size="18" /></view>
-            <text>退款申请</text>
-            <text class="todo-count pink-count">{{ refunds }}</text>
+          <button class="todo-row" @click="orders('已完成')">
+            <view class="todo-icon pink"><Icon name="receipt" tone="orange" :size="18" /></view>
+            <text>已完成订单</text>
+            <text class="todo-count pink-count">{{ completed }}</text>
             <Icon name="chevron-right" :size="13" />
           </button>
           <button class="todo-row" @click="openShop">
@@ -299,7 +316,7 @@ function reset() {
         </view>
         <view class="status-tabs">
           <button
-            v-for="item in ['待发货', '待收货', '退款中', '全部']"
+            v-for="item in ['待发货', '待收货', '已完成', '全部']"
             :key="item"
             :class="{ selected: status === item }"
             :data-testid="`status-${item}`"
@@ -320,10 +337,7 @@ function reset() {
               <Icon name="user" :size="12" />
               {{ order.buyer }}
             </view>
-            <text
-              class="merchant-order-status"
-              :class="{ 'status-refund': order.status === '退款中' }"
-            >
+            <text class="merchant-order-status">
               {{ order.status }}
             </text>
           </view>
@@ -346,13 +360,6 @@ function reset() {
             >
               <Icon name="truck" tone="orange" :size="13" />
               去发货
-            </button>
-            <button
-              v-else-if="order.status === '退款中'"
-              class="order-action refund-action"
-              @click="refund(order)"
-            >
-              处理退款
             </button>
             <button v-else class="order-action neutral-action" @click="inspectOrder(order)">
               查看详情
@@ -404,7 +411,8 @@ function reset() {
           </view>
           <view class="managed-product-actions">
             <button
-              @click="state = toggleDemoProduct(product.id)"
+              @click="toggleProduct(product.id)"
+              :disabled="busy"
               :data-testid="`toggle-${product.id}`"
             >
               {{ product.published ? '下架' : '上架' }}
@@ -436,11 +444,13 @@ function reset() {
           </button>
           <button @click="reset">
             <Icon name="settings" :size="21" />
-            <text>重置本机演示数据</text>
+            <text>重置共享演示场景</text>
             <Icon name="chevron-right" :size="16" />
           </button>
         </view>
-        <text class="demo-explanation">当前为商家端视觉样板，所有经营数据与操作均为本机演示。</text>
+        <text class="demo-explanation">
+          当前为商家端视觉样板，商品、库存与订单已和用户端联动，所有支付与物流均为模拟。
+        </text>
       </view>
       <view v-if="tab === 'home'" class="merchant-encouragement">
         <Icon name="sparkles" tone="orange" :size="16" />
@@ -459,6 +469,10 @@ function reset() {
         </view>
       </view>
       <text class="form-label">物流公司</text>
+      <text v-if="activeOrder" class="form-note">
+        收货：{{ activeOrder.recipient.name }} · {{ activeOrder.recipient.phone }} ·
+        {{ activeOrder.recipient.address }}
+      </text>
       <input
         v-model="carrier"
         class="form-input"
@@ -478,7 +492,13 @@ function reset() {
       />
       <text v-if="error" class="form-error" data-testid="ship-error">{{ error }}</text>
       <text class="form-note">本次为本地模拟发货，不会联系真实物流公司。</text>
-      <button class="primary-button merchant-primary" @click="ship" data-testid="confirm-ship">
+      <button
+        class="primary-button merchant-primary"
+        :disabled="busy"
+        :loading="busy"
+        @click="ship"
+        data-testid="confirm-ship"
+      >
         确认模拟发货
       </button>
     </Sheet>
@@ -505,6 +525,18 @@ function reset() {
         <view class="order-detail-row">
           <text>同好昵称</text>
           <text>{{ activeOrder.buyer }}</text>
+        </view>
+        <view class="order-detail-row">
+          <text>收货人</text>
+          <text>{{ activeOrder.recipient.name }} · {{ activeOrder.recipient.phone }}</text>
+        </view>
+        <view class="order-detail-row">
+          <text>收货地址</text>
+          <text>{{ activeOrder.recipient.address }}</text>
+        </view>
+        <view v-if="activeOrder.completedAt" class="order-detail-row">
+          <text>完成时间</text>
+          <text>{{ activeOrder.completedAt }}</text>
         </view>
         <view v-if="activeOrder.tracking" class="tracking-info">
           <Icon name="truck" tone="orange" />
@@ -560,9 +592,11 @@ function reset() {
         data-testid="edit-product-stock"
       />
       <text v-if="error" class="form-error">{{ error }}</text>
-      <text class="form-note">保存到本机演示数据，供页面效果和流程体验。</text>
+      <text class="form-note">保存后将同步到用户端商品列表。</text>
       <button
         class="primary-button merchant-primary"
+        :disabled="busy"
+        :loading="busy"
         @click="saveProduct"
         data-testid="save-product"
       >
@@ -576,7 +610,14 @@ function reset() {
       <input v-model="shopDescription" class="form-input" maxlength="50" aria-label="店铺介绍" />
       <text v-if="error" class="form-error">{{ error }}</text>
       <text class="form-note">把小店的独特之处，介绍给每一位同好。</text>
-      <button class="primary-button merchant-primary" @click="saveShop">保存店铺资料</button>
+      <button
+        class="primary-button merchant-primary"
+        :disabled="busy"
+        :loading="busy"
+        @click="saveShop"
+      >
+        保存店铺资料
+      </button>
     </Sheet>
     <Sheet :visible="sheet === 'message'" title="小店来信" @close="sheet = ''">
       <view class="shop-message">

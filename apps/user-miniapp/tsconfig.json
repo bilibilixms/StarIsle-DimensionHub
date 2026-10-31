@@ -5,6 +5,7 @@
     "src/**/*.d.ts",
     "src/**/*.vue",
     "../../packages/shared/src/**/*.ts",
-    "../../packages/ui/src/**/*.vue"
+    "../../packages/ui/src/**/*.vue",
+    "../../packages/ui/src/**/*.ts"
   ]
 }

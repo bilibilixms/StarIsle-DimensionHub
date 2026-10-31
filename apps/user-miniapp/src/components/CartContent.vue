@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
 import {
   checkoutCart,
+  prepareCartCheckout,
   money,
   updateCart,
   variantPrice,
@@ -11,6 +12,7 @@ import {
 } from '@starisle/shared/demo'
 const props = defineProps<{ state: DemoState }>()
 const emit = defineEmits<{ refresh: []; completed: []; browse: [] }>()
+const busy = ref(false)
 const items = computed(() =>
   props.state.cart
     .map((item) => ({
@@ -36,21 +38,36 @@ function change(item: DemoCartItem, action: 'plus' | 'minus' | 'select' | 'remov
   }
 }
 function checkout() {
+  if (busy.value) return
   if (!selectedCount.value) return uni.showToast({ title: '请先选择商品', icon: 'none' })
+  let prepared
+  try {
+    prepared = prepareCartCheckout()
+  } catch (error) {
+    return uni.showToast({
+      title: error instanceof Error ? error.message : '请刷新商品后重试',
+      icon: 'none',
+    })
+  }
+  const checkoutDraft = prepared
   uni.showModal({
     title: '确认模拟支付',
-    content: `共 ${selectedCount.value} 件商品，合计 ¥${money(amount.value)}。仅生成本地演示订单，不会产生真实扣款。`,
+    content: `共 ${selectedCount.value} 件商品，合计 ¥${money(checkoutDraft.items.reduce((sum, item) => sum + item.expectedPrice * item.quantity, 0))}。收货：${checkoutDraft.recipient.name}，${checkoutDraft.recipient.address}。仅生成联动演示订单，不会产生真实扣款。`,
     confirmText: '模拟支付',
     confirmColor: '#8b5cf6',
-    success(result) {
+    async success(result) {
       if (!result.confirm) return
+      if (busy.value) return
+      busy.value = true
       try {
-        checkoutCart()
+        await checkoutCart(checkoutDraft)
         emit('refresh')
         emit('completed')
         uni.showToast({ title: '模拟支付成功', icon: 'success' })
       } catch (error) {
         uni.showToast({ title: error instanceof Error ? error.message : '下单失败', icon: 'none' })
+      } finally {
+        busy.value = false
       }
     },
   })
@@ -105,11 +122,19 @@ function checkout() {
           <text class="summary-note">合计（免运费）</text>
           <text class="summary-price" data-testid="cart-total">¥{{ money(amount) }}</text>
         </view>
-        <button class="primary-button checkout" data-testid="cart-checkout" @click="checkout">
+        <button
+          class="primary-button checkout"
+          :disabled="busy"
+          :loading="busy"
+          data-testid="cart-checkout"
+          @click="checkout"
+        >
           模拟结算（{{ selectedCount }}）
         </button>
       </view>
-      <text class="form-note">当前为应用端演示，订单和购物车仅保存在本机。</text>
+      <text class="form-note">
+        订单与商家端联动，购物车仅保存在本机。演示收货地址可在「我的」修改。
+      </text>
     </template>
     <view v-else class="empty-state">
       <Icon name="cart" tone="purple" :size="44" />

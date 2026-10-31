@@ -1,19 +1,22 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { onLoad, onShow } from '@dcloudio/uni-app'
+import { onLoad } from '@dcloudio/uni-app'
+import SyncStatus from '@starisle/ui/SyncStatus.vue'
+import { useDemoSync } from '@starisle/ui/useDemoSync'
 import Icon from '@starisle/ui/Icon.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
 import {
   addToCart,
   buyDemoProduct,
+  prepareBuyCheckout,
   DEMO_ASSETS,
-  getDemoState,
   money,
   toggleFavorite,
   variantPrice,
 } from '@starisle/shared/demo'
 
-const state = ref(getDemoState())
+const { state, sync, syncError, connected, syncing } = useDemoSync()
+const busy = ref(false)
 const id = ref('')
 const variant = ref<'standard' | 'gift'>('standard')
 const quantity = ref(1)
@@ -28,13 +31,9 @@ const favorite = computed(() => state.value.favorites.includes(id.value))
 const cartCount = computed(() => state.value.cart.reduce((sum, item) => sum + item.quantity, 0))
 const platform = uni
 const statusHeight = uni.getSystemInfoSync().statusBarHeight || 0
-function refresh() {
-  state.value = getDemoState()
-}
 onLoad((query) => {
   id.value = query?.id || 'star-fairy'
 })
-onShow(refresh)
 function goHome() {
   sheet.value = ''
   uni.reLaunch({ url: '/pages/index/index' })
@@ -57,6 +56,7 @@ function changeQuantity(delta: number) {
   quantity.value = Math.max(1, Math.min(product.value?.stock || 1, quantity.value + delta))
 }
 function confirm() {
+  if (busy.value) return
   if (!product.value) return
   try {
     if (sheet.value === 'add') {
@@ -64,19 +64,24 @@ function confirm() {
       sheet.value = ''
       uni.showToast({ title: '心动已放进口袋', icon: 'success' })
     } else {
+      const checkoutDraft = prepareBuyCheckout(id.value, variant.value, quantity.value)
       uni.showModal({
         title: '确认模拟支付',
-        content: `合计 ¥${money(price.value * quantity.value)}。这是一笔本地演示订单，不会产生真实扣款。`,
+        content: `合计 ¥${money(checkoutDraft.items[0]!.expectedPrice * checkoutDraft.items[0]!.quantity)}。收货：${checkoutDraft.recipient.name}，${checkoutDraft.recipient.address}。这是一笔联动演示订单，不会产生真实扣款。`,
         confirmText: '模拟支付',
         confirmColor: '#8b5cf6',
-        success(result) {
+        async success(result) {
           if (!result.confirm) return
+          if (busy.value) return
+          busy.value = true
           try {
-            buyDemoProduct(id.value, variant.value, quantity.value)
+            await buyDemoProduct(checkoutDraft)
             sheet.value = ''
             uni.reLaunch({ url: '/pages/index/index?tab=profile' })
           } catch (cause) {
             error.value = cause instanceof Error ? cause.message : '请稍后重试'
+          } finally {
+            busy.value = false
           }
         },
       })
@@ -121,13 +126,14 @@ function share() {
         </view>
       </view>
       <view class="detail-body">
+        <SyncStatus :connected="connected" :syncing="syncing" :error="syncError" @retry="sync" />
         <view class="product-info">
           <view class="price-line">
             <text class="detail-price">
               <text>¥</text>
               {{ money(price) }}
             </text>
-            <text class="product-sales">{{ product.sold }} 位同好已收藏</text>
+            <text class="product-sales">已售 {{ product.sold }} 件</text>
           </view>
           <text class="detail-title" data-testid="detail-title">{{ product.title }}</text>
           <text class="detail-subtitle">{{ product.subtitle }}</text>
@@ -267,8 +273,8 @@ function share() {
         <view v-if="sheet === 'buy'" class="demo-address">
           <Icon name="pin" tone="purple" :size="17" />
           <view>
-            <text>小星同学 · 演示收货地址</text>
-            <text>上海市 · 星屿路 28 号</text>
+            <text>{{ state.recipient.name }} · 演示收货地址</text>
+            <text>{{ state.recipient.address }}</text>
           </view>
         </view>
         <text v-if="error" class="form-error">{{ error }}</text>
@@ -279,7 +285,13 @@ function share() {
               : '加入购物车后，可以在「购物车」里继续查看。'
           }}
         </text>
-        <button class="primary-button" data-testid="confirm-sku" @click="confirm">
+        <button
+          class="primary-button"
+          :disabled="busy"
+          :loading="busy"
+          data-testid="confirm-sku"
+          @click="confirm"
+        >
           {{
             sheet === 'buy'
               ? `模拟下单 · ¥${money(price * quantity)}`
@@ -301,7 +313,8 @@ function share() {
         <button class="shop-back" @click="goHome">回到岛上，逛逛更多好物</button>
       </Sheet>
     </template>
-    <view v-else class="empty-state missing-product">
+    <view v-else-if="!syncing" class="empty-state missing-product">
+      <SyncStatus :connected="connected" :syncing="syncing" :error="syncError" @retry="sync" />
       <Icon name="bag" tone="purple" :size="44" />
       <text class="empty-title">这份好物暂时不在岛上</text>
       <text class="empty-copy">可能已下架，回首页发现新的心动吧。</text>

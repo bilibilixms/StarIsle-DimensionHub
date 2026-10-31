@@ -20,7 +20,9 @@
     "build": "npm run build:mp-weixin --workspaces --if-present",
     "build:h5": "npm run build:h5 --workspaces --if-present",
     "test:e2e": "playwright test",
-    "assets:demo": "node scripts/prepare-demo-assets.mjs"
+    "assets:demo": "node scripts/prepare-demo-assets.mjs",
+    "dev:demo": "node --experimental-strip-types scripts/demo-server.mjs",
+    "test:demo": "node --experimental-strip-types --test tests/demo-server.test.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

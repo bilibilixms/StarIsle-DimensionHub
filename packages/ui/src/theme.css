@@ -157,6 +157,7 @@ textarea:focus-visible {
     box-shadow: 0 0 90px rgba(84, 50, 119, 0.07);
   }
 }
+/* #ifdef H5 */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -166,3 +167,4 @@ textarea:focus-visible {
     scroll-behavior: auto !important;
   }
 }
+/* #endif */

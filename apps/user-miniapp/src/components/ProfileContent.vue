@@ -1,21 +1,69 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
-import { DEMO_ASSETS, money, resetDemoState, type DemoState } from '@starisle/shared/demo'
-defineProps<{ state: DemoState }>()
+import Sheet from '@starisle/ui/Sheet.vue'
+import {
+  DEMO_ASSETS,
+  money,
+  resetLocalDemoState,
+  receiveDemoOrder,
+  editDemoRecipient,
+  type DemoState,
+  type DemoOrder,
+} from '@starisle/shared/demo'
+const props = defineProps<{ state: DemoState }>()
 const emit = defineEmits<{ refresh: []; browse: [] }>()
 const section = ref<'orders' | 'favorites'>('orders')
+const busy = ref('')
+const addressSheet = ref(false)
+const recipient = ref({ ...props.state.recipient })
+const addressError = ref('')
+function openAddress() {
+  recipient.value = { ...props.state.recipient }
+  addressError.value = ''
+  addressSheet.value = true
+}
+function saveAddress() {
+  try {
+    editDemoRecipient(recipient.value)
+    emit('refresh')
+    addressSheet.value = false
+  } catch (error) {
+    addressError.value = error instanceof Error ? error.message : '请检查收货信息'
+  }
+}
+function receive(order: DemoOrder) {
+  if (busy.value) return
+  uni.showModal({
+    title: '确认收到好物',
+    content: '确认后，此演示订单将完成，商家端也会同步更新。',
+    confirmText: '确认收货',
+    async success(result) {
+      if (!result.confirm || busy.value) return
+      busy.value = order.id
+      try {
+        await receiveDemoOrder(order.id)
+        emit('refresh')
+        uni.showToast({ title: '已确认收货', icon: 'success' })
+      } catch (error) {
+        uni.showToast({ title: error instanceof Error ? error.message : '操作失败', icon: 'none' })
+      } finally {
+        busy.value = ''
+      }
+    },
+  })
+}
 function open(id: string) {
   uni.navigateTo({ url: `/pages/product/detail?id=${id}` })
 }
 function reset() {
   uni.showModal({
-    title: '重置演示数据',
-    content: '清空本机的收藏、购物车和模拟订单，恢复初始场景。',
+    title: '清空本机收藏与购物车',
+    content: '清空本机收藏、购物车并恢复演示地址。已支付订单将保留，可在商家端重置共享场景。',
     confirmColor: '#8b5cf6',
     success(result) {
       if (result.confirm) {
-        resetDemoState()
+        resetLocalDemoState()
         emit('refresh')
       }
     },
@@ -34,6 +82,13 @@ function reset() {
       </view>
       <Icon name="sparkles" tone="purple" :size="30" />
     </view>
+    <button
+      class="secondary-button address-button"
+      data-testid="edit-recipient"
+      @click="openAddress"
+    >
+      演示收货地址：{{ state.recipient.name }} · {{ state.recipient.phone }}
+    </button>
     <view class="profile-shortcuts">
       <button :class="{ active: section === 'orders' }" @click="section = 'orders'">
         <text>{{ state.orders.length }}</text>
@@ -52,10 +107,15 @@ function reset() {
       <view class="section-heading-title">
         <text>{{ section === 'orders' ? '我的订单' : '心动收藏' }}</text>
       </view>
-      <text class="profile-list-note">本地演示记录</text>
+      <text class="profile-list-note">与商家端同步</text>
     </view>
     <template v-if="section === 'orders'">
-      <view v-for="order in state.orders" :key="order.id" class="order-card">
+      <view
+        v-for="order in state.orders"
+        :key="order.id"
+        class="order-card"
+        :data-testid="`user-order-${order.id}`"
+      >
         <view class="order-heading">
           <text>{{ state.shop.name }}</text>
           <text class="order-status">{{ order.status }}</text>
@@ -69,6 +129,23 @@ function reset() {
           </view>
         </view>
         <text class="order-number">演示订单 {{ order.id }}</text>
+        <view v-if="order.carrier && order.tracking" class="order-logistics">
+          <text>{{ order.carrier }} · {{ order.tracking }}</text>
+          <text>{{ order.shippedAt }} 模拟发货</text>
+        </view>
+        <button
+          v-if="order.status === '待收货'"
+          class="secondary-button receive-button"
+          :disabled="!!busy"
+          :loading="busy === order.id"
+          :data-testid="`receive-${order.id}`"
+          @click="receive(order)"
+        >
+          确认收货
+        </button>
+        <text v-if="order.completedAt" class="order-number">
+          {{ order.completedAt }} 已确认收货
+        </text>
       </view>
       <view v-if="!state.orders.length" class="empty-state">
         <Icon name="receipt" tone="purple" :size="40" />
@@ -97,12 +174,62 @@ function reset() {
         <text class="empty-copy">在商品卡片点亮爱心，下次还能找到它。</text>
       </view>
     </template>
-    <button class="reset-button" @click="reset">重置演示数据</button>
+    <button class="reset-button" @click="reset">清空本机收藏与购物车</button>
     <text class="profile-footnote">这是一座正在生长的小岛。感谢你来做客。</text>
+    <Sheet :visible="addressSheet" title="演示收货地址" @close="addressSheet = false">
+      <text class="form-note">用于本地联动演示，请填写虚构信息。</text>
+      <text class="form-label">收货人</text>
+      <input
+        v-model="recipient.name"
+        class="form-input"
+        aria-label="收货人"
+        data-testid="recipient-name"
+        maxlength="30"
+      />
+      <text class="form-label">手机号</text>
+      <input
+        v-model="recipient.phone"
+        class="form-input"
+        aria-label="手机号"
+        data-testid="recipient-phone"
+        maxlength="11"
+        type="number"
+      />
+      <text class="form-label">收货地址</text>
+      <input
+        v-model="recipient.address"
+        class="form-input"
+        aria-label="收货地址"
+        data-testid="recipient-address"
+        maxlength="200"
+      />
+      <text v-if="addressError" class="form-error">{{ addressError }}</text>
+      <button class="primary-button" data-testid="save-recipient" @click="saveAddress">
+        保存演示地址
+      </button>
+    </Sheet>
   </view>
 </template>
 
 <style scoped>
+.address-button {
+  margin: 16px 0;
+  width: 100%;
+  font-size: 11px;
+}
+.order-logistics {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 12px;
+  color: #a08aaf;
+  font-size: 10px;
+  line-height: 1.7;
+}
+.receive-button {
+  margin: 12px 0 0 auto;
+  width: fit-content;
+}
 .profile-content {
   padding: 14px 20px;
 }
