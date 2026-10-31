@@ -1,0 +1,7 @@
+node_modules/
+.tools/
+**/dist/
+**/target/
+apps/*/src/generated/
+package-lock.json
+backend/

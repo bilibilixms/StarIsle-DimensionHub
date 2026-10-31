@@ -1,105 +1,113 @@
 # StarIsle-DimensionHub
 
-星屿｜二次元社区与交易平台，连接用户、画师、漫展方及商家。
+星屿｜次元聚集地。面向用户、画师、漫展方和商家的二次元社区与交易产品。
 
-采用模块化单体架构：两个独立小程序共用一个 Spring Boot 后端。当前提供开发骨架、真实商品列表接口及依赖环境，交易闭环将逐步实现。
+当前开发重点是四个小程序的应用端演示。第一批已制作用户首页、商品详情和商家工作台三个视觉样板，支持本地收藏、购物车、模拟下单、商品编辑上下架和模拟发货。画师端、漫展方端的独立工程与完整功能按后续规划推进。
 
-| 模块 | 技术 |
-| --- | --- |
-| 用户端、商家端 | uni-app + Vue 3 + TypeScript |
-| 前端工作区 | npm workspaces，共享接口类型与请求封装 |
-| 后端 | Java 21 + Spring Boot 4.1.2 + Maven Wrapper |
-| 数据与缓存 | MySQL 8.4 LTS + Redis 8.2 |
-| 数据库迁移、接口文档 | Flyway + springdoc OpenAPI |
-| 开发依赖 | Docker Desktop + Docker Compose |
+## 快速预览应用端
+
+需要 Node.js 22.23.4 / npm 10。已有项目内工具链时脚本会自动使用 `.tools/node`；工具安装方式见下方。
+
+```bash
+./scripts/npm.sh ci
+
+# 两个终端分别执行；无需后端、MySQL 或 Redis
+CI=true ./scripts/npm.sh run dev:user:h5
+CI=true ./scripts/npm.sh run dev:merchant:h5
+```
+
+- 用户端：http://localhost:5173
+- 商家端：http://localhost:5174
+- 商品详情：在用户首页点击商品卡片。
+
+演示数据保存在各端本机存储中，可在「我的」重置。用户端和商家端使用各自的演示场景；不同应用之间不会自动同步订单或商品。登录与真实支付尚未接入，「模拟支付」不会扣款。
+
+视觉样板的操作路径、验证范围和素材说明见 [视觉样板说明](docs/visual-samples.md)。
+
+## 微信小程序预览与构建
+
+```bash
+# 持续构建用户端 / 商家端，按需要分别启动
+CI=true ./scripts/npm.sh run dev:user
+CI=true ./scripts/npm.sh run dev:merchant
+
+# 验证与发布构建
+./scripts/npm.sh run typecheck
+CI=true ./scripts/npm.sh run build
+CI=true ./scripts/npm.sh run build:h5
+```
+
+微信开发者工具导入各应用的 `dist/dev/mp-weixin`；正式构建输出在 `dist/build/mp-weixin`，H5 输出在 `dist/build/h5`。各端的 `touristappid` 是占位配置；当前安装的微信开发者工具拒绝该值，需使用工具提供的有效测试号 AppID 或自己的小程序 AppID。可在 `src/manifest.json` 的 `mp-weixin.appid` 配置对应账号。
+
+若 Windows 微信开发者工具拒绝 WSL 的 `\\wsl.localhost\\...` 路径，可将编译产物持续同步到 Windows 本地目录：
+
+```bash
+python3 scripts/sync-weixin-preview.py \
+  --target /mnt/c/Users/<Windows用户名>/AppData/Local/Temp/StarIsle-Preview \
+  --watch
+```
+
+然后导入该 Windows 目录中的 `user-miniapp` 和 `merchant-miniapp`。同步仅处理编译产物，保留开发者工具的私有配置；源配置仍为占位值时，也保留在 Windows 副本中填写的有效 AppID。
+
+`CI=true` 用于跳过 uni-app 编译器的联网更新检查。当前两个应用使用本地演示数据，不需要填写 API 地址。
+
+## 浏览器交互回归
+
+首次准备浏览器：
+
+```bash
+./scripts/npm.sh exec -- playwright install --with-deps chromium
+```
+
+构建 H5 后执行：
+
+```bash
+CI=true ./scripts/npm.sh run build:h5
+./scripts/npm.sh run test:e2e
+```
+
+Playwright 自动启动并关闭本地静态服务器（4173、4174），验证主要交互并保存截图到 `.tools/previews/`，报告在 `.tools/playwright-report/`。依赖已在系统或项目内可用时直接执行测试即可；若浏览器安装到自定义目录，运行时同时设置 `PLAYWRIGHT_BROWSERS_PATH`。
+
+GitHub Actions 包含类型检查、两端构建和浏览器回归；原有后端集成测试继续保留。
+
+## 工程结构
 
 ```text
-apps/user-miniapp/      用户端小程序
-apps/merchant-miniapp/  商家端小程序
-packages/shared/       共用接口类型和 uni.request 封装
-backend/               模块化单体后端
-scripts/               环境、构建和启动工具
-compose.yaml           MySQL、Redis 开发环境
+apps/user-miniapp/      用户端：首页、详情、购物车及个人中心演示
+apps/merchant-miniapp/  商家端：工作台、商品、订单及店铺管理演示
+packages/ui/           共用图标、导航、弹层和主题
+packages/shared/       接口类型、原有请求封装、本地演示数据及状态操作
+backend/               已有 Java 21 + Spring Boot 4.1.2 后端骨架
+scripts/               环境、构建和素材准备工具
+compose.yaml           已有 MySQL 8.4 / Redis 8.2 开发环境
 ```
 
-## 本地启动（WSL2 / Linux）
+小程序编译要求 Vue 组件位于应用源目录内。Vite 配置会将 `packages/ui/src` 同步到各应用忽略提交的 `src/generated/ui`；共享组件统一修改 `packages/ui/src`，重启编译即可更新。
 
-需要 Git、Python 3、curl、tar，以及可正常执行 `docker info` 和 `docker compose version` 的 Docker 环境。Docker Desktop 用户需打开当前发行版的 WSL Integration。
+样板使用 uni-app + Vue 3 + TypeScript，工作区由 npm workspaces 管理。UI 素材位于各应用 `src/static/`；实际组件和交互使用代码实现。
 
-首次配置，在仓库根目录执行：
+## 工具链及已有后端
+
+Linux x86_64 / WSL2 可选安装项目内 Node.js 22.23.4 与 Temurin JDK 21：
 
 ```bash
-# 可选：安装项目内的 Node.js 22.23.4、Temurin JDK 21（Linux x86_64）
 bash scripts/bootstrap.sh
+```
 
-# 生成仅保存在本地的随机数据库与 Redis 密码，不覆盖已有 .env
+工具缓存位于忽略提交的 `.tools/`，不会修改系统 shell 配置。应用端演示无需启动下列后端服务；需要查看已有接口时再执行：
+
+```bash
 python3 scripts/init-env.py
 docker compose up -d --wait
-./scripts/npm.sh ci
-```
-
-工具安装在忽略提交的 `.tools/`，不会修改系统 Node、Java 或 shell 配置。也可以自行安装上述版本，脚本会使用系统工具。首次执行 Maven Wrapper 会自动下载 Maven；依赖缓存同样在 `.tools/`。
-
-分别打开终端启动后端和需要的小程序：
-
-```bash
-# 后端；自动读取根目录 .env
 ./scripts/mvn.sh spring-boot:run
-
-# 用户端微信小程序，持续构建
-./scripts/npm.sh run dev:user
-
-# 商家端微信小程序，持续构建
-./scripts/npm.sh run dev:merchant
 ```
 
-微信开发者工具分别导入 `apps/user-miniapp/dist/dev/mp-weixin` 和 `apps/merchant-miniapp/dist/dev/mp-weixin`。默认使用游客 AppID；正式开发时在各自 `src/manifest.json` 的 `mp-weixin.appid` 填入对应小程序 AppID。游客模式能力有限，微信登录、支付及发布需要真实账号配置。
+后端商品接口为 `http://127.0.0.1:8080/api/v1/products`，健康检查为 `/actuator/health`，本地开启的 Swagger UI 为 `/swagger-ui/index.html`。MySQL、Redis 默认端口分别为 13306、26379，本地随机密码保存在 `.env`。后端验证命令为 `./scripts/mvn.sh verify`，通过 Testcontainers 使用隔离数据库。
 
-也可以用 H5 辅助联调：
+Docker Desktop 用户需启用当前发行版的 WSL Integration。停止本项目依赖使用 `docker compose stop`；不要提交 `.env`、第三方密钥或工具缓存。
 
-```bash
-./scripts/npm.sh run dev:user:h5       # http://localhost:5173
-./scripts/npm.sh run dev:merchant:h5   # http://localhost:5174
-```
+## 开发规划
 
-| 服务 | 本地地址 |
-| --- | --- |
-| REST API | http://127.0.0.1:8080/api/v1/products |
-| 健康检查 | http://127.0.0.1:8080/actuator/health |
-| OpenAPI JSON | http://127.0.0.1:8080/v3/api-docs |
-| Swagger UI | http://127.0.0.1:8080/swagger-ui/index.html |
-| MySQL | 127.0.0.1:13306 |
-| Redis | 127.0.0.1:26379 |
+已确认本轮只做用户端、画师端、漫展方端、商家端四个小程序，不开发 Web 管理界面和后端业务。按每天 2–3 小时、每周 5 天协作，完整应用端演示预计 3–4 周，首批视觉样板属于其中的初始交付。
 
-数据库与 Redis 密码见本地 `.env`，数据库名和用户名默认均为 `starisle`。初次启动 Flyway 自动建表；没有演示商品时接口返回空列表。Swagger 文档只在本地 `.env` 开启，默认配置关闭。
-
-端口可在根目录 `.env` 修改。小程序 API 地址默认 `http://127.0.0.1:8080`，可复制各应用的 `.env.example` 为 `.env.local` 后修改 `VITE_API_BASE_URL`，修改后重新构建。
-
-真机调试时，`127.0.0.1` 指向手机，需要使用手机可访问的后端地址，并相应设置 `SERVER_ADDRESS`、WSL/Windows 网络与防火墙。微信开发者工具本地调试可临时关闭域名校验；上线必须配置 HTTPS 合法请求域名，商品图片还需配置对应的图片域名。H5 在 `localhost:5173/5174` 联调，其他来源需加入 `CORS_ALLOWED_ORIGINS`。
-
-## 验证和构建
-
-```bash
-./scripts/npm.sh run typecheck
-CI=true ./scripts/npm.sh run build       # 两个微信小程序
-CI=true ./scripts/npm.sh run build:h5    # 两个 H5 预览产物
-./scripts/mvn.sh verify                  # 真实 MySQL、Redis 集成测试与后端 JAR
-```
-
-前端产物位于各应用 `dist/build/`，后端 JAR 为 `backend/target/starisle-backend-0.0.1-SNAPSHOT.jar`。`CI=true` 跳过 uni-app 编译器的联网更新检查，适用于自动化和受限环境。测试通过 Testcontainers 自动启动临时容器，不读取或改动开发数据库。
-
-GitHub Actions 已配置类型检查、两端构建及后端集成测试；推送后可查看远端结果。
-
-## 当前范围
-
-- 已实现：商品列表及关键词检索、分页校验、上下架与店铺状态过滤、统一响应、CORS、数据库迁移、Redis 健康检查、接口文档。
-- 用户端：可查询真实商品，包含加载、空列表和失败重试状态。
-- 商家端：起始页与独立构建配置，入驻、商品和订单管理尚未实现。
-- 后端已预留账号、店铺、收藏、订单、支付模块；当前仅公开商品列表和健康检查等必要入口，未实现的私有接口不会放行。
-- 文件存储、微信登录、收藏、下单、支付尚未接入，不具备上线交易条件。
-
-当前开发方向调整为参考展示图中的用户端、画师端、漫展方端、商家端四个小程序应用端演示，不包含 Web 管理界面和后端服务开发。后续通过本地样例数据及状态操作完善页面与交互，现有后端工程保留。模块边界与数据约定见 [架构说明](docs/architecture.md)。
-
-各端页面、模拟交互、两人分工和验收条件见 [应用端开发规划](docs/development-plan.md)：四个小程序预计 3–4 周。此处为后续开发规划，目前代码仍为上述已实现范围。
-
-停止本项目依赖可运行 `docker compose stop`，数据保存在项目命名卷中。不要将 `.env`、构建缓存或第三方密钥提交到 Git。
+具体页面、两人分工和验收条件见 [应用端开发规划](docs/development-plan.md)。已有后端与长期模块约定见 [架构说明](docs/architecture.md)。

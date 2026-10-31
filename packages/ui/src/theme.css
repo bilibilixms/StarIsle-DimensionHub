@@ -1,0 +1,168 @@
+page {
+  background: #f5f2fa;
+  color: #302a40;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+}
+view,
+button {
+  box-sizing: border-box;
+}
+button {
+  font-family: inherit;
+}
+button::after {
+  border: none;
+}
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #8b5cf6;
+  outline-offset: 3px;
+}
+.app-screen {
+  background: #f8f7fc;
+  max-width: 440px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding-bottom: calc(92px + env(safe-area-inset-bottom));
+}
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  line-height: 1;
+}
+.primary-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 46px;
+  background: #8b5cf6;
+  color: #fff;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.4;
+  padding: 13px 16px;
+  margin: 0;
+}
+.secondary-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border: 1px solid #e5dcee;
+  color: #7a51b9;
+  background: white;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 10px 15px;
+  margin: 0;
+}
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+.section-heading-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 18px;
+  font-weight: 750;
+}
+.text-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 0;
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 11px;
+  color: #9690a4;
+  line-height: 1.4;
+}
+.money {
+  color: #e77393;
+  font-weight: 750;
+}
+.muted {
+  color: #a29aaa;
+}
+.form-label {
+  display: block;
+  margin: 18px 0 9px;
+  font-size: 13px;
+  color: #60556f;
+  font-weight: 550;
+}
+.form-input {
+  min-height: 44px;
+  padding: 11px 13px;
+  border: 1px solid #e7e1ee;
+  background: #faf8fc;
+  border-radius: 10px;
+  font-size: 14px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.form-error {
+  display: block;
+  margin: 12px 0;
+  color: #cf5076;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.form-note {
+  display: block;
+  margin: 15px 0;
+  color: #a197ad;
+  font-size: 11px;
+  line-height: 1.8;
+}
+.empty-state {
+  padding: 52px 20px;
+  text-align: center;
+  color: #a097ac;
+}
+.empty-title {
+  display: block;
+  margin: 14px 0 8px;
+  color: #62546f;
+  font-size: 16px;
+  font-weight: 600;
+}
+.empty-copy {
+  display: block;
+  margin-bottom: 20px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+@media (min-width: 600px) {
+  .app-screen {
+    box-shadow: 0 0 90px rgba(84, 50, 119, 0.07);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

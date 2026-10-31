@@ -155,3 +155,6 @@ target/
 *.iml
 .DS_Store
 project.private.config.json
+apps/*/src/generated/
+__pycache__/
+*.py[cod]

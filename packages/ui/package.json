@@ -1,0 +1,15 @@
+{
+  "name": "@starisle/ui",
+  "version": "0.1.0",
+  "private": true,
+  "exports": {
+    "./Icon.vue": "./src/Icon.vue",
+    "./AppHeader.vue": "./src/AppHeader.vue",
+    "./BottomNav.vue": "./src/BottomNav.vue",
+    "./Sheet.vue": "./src/Sheet.vue",
+    "./theme.css": "./src/theme.css"
+  },
+  "peerDependencies": {
+    "vue": "^3.4.21"
+  }
+}
