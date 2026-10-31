@@ -6,6 +6,7 @@ import AppHeader from '@starisle/ui/AppHeader.vue'
 import BottomNav from '@starisle/ui/BottomNav.vue'
 import Icon from '@starisle/ui/Icon.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
+import OrderItems from '@starisle/user/OrderItems.vue'
 import { logoutDemo, openLogin } from '@starisle/shared/auth'
 import {
   createDemoProduct,
@@ -359,12 +360,7 @@ async function toggleProduct(id: string) {
             </text>
           </view>
           <view class="merchant-order-product" @click="inspectOrder(order)">
-            <image :src="order.cover" mode="aspectFill" />
-            <view class="merchant-order-copy">
-              <text>{{ order.title }}</text>
-              <text class="merchant-order-variant">{{ order.variant }} × {{ order.quantity }}</text>
-              <text class="merchant-order-number">{{ order.id }}</text>
-            </view>
+            <OrderItems :order="order" compact />
             <text class="merchant-order-price">¥{{ money(order.amount) }}</text>
           </view>
           <view class="merchant-order-footer">
@@ -480,15 +476,7 @@ async function toggleProduct(id: string) {
     </view>
     <BottomNav :current="tab" merchant @change="changeTab" />
     <Sheet :visible="sheet === 'ship'" title="把心意送出去" @close="sheet = ''">
-      <view v-if="activeOrder" class="shipping-summary">
-        <image :src="activeOrder.cover" mode="aspectFill" />
-        <view>
-          <text>{{ activeOrder.title }}</text>
-          <text class="shipping-summary-note">
-            {{ activeOrder.buyer }} · {{ activeOrder.variant }} × {{ activeOrder.quantity }}
-          </text>
-        </view>
-      </view>
+      <OrderItems v-if="activeOrder" :order="activeOrder" compact />
       <text class="form-label">物流公司</text>
       <text v-if="activeOrder" class="form-note">
         收货：{{ activeOrder.recipient.name }} · {{ activeOrder.recipient.phone }} ·
@@ -525,16 +513,8 @@ async function toggleProduct(id: string) {
     </Sheet>
     <Sheet :visible="sheet === 'order'" title="订单详情" @close="sheet = ''">
       <template v-if="activeOrder">
-        <view class="shipping-summary">
-          <image :src="activeOrder.cover" mode="aspectFill" />
-          <view>
-            <text>{{ activeOrder.title }}</text>
-            <text class="shipping-summary-note">
-              {{ activeOrder.variant }} × {{ activeOrder.quantity }}
-            </text>
-            <text class="order-detail-amount">¥{{ money(activeOrder.amount) }}</text>
-          </view>
-        </view>
+        <OrderItems :order="activeOrder" />
+        <text class="order-detail-amount">合计 ¥{{ money(activeOrder.amount) }}</text>
         <view class="order-detail-row">
           <text>订单编号</text>
           <text>{{ activeOrder.id }}</text>
@@ -1001,6 +981,9 @@ async function toggleProduct(id: string) {
 }
 .merchant-order-status.status-refund {
   color: #de8da9;
+}
+.merchant-order-product > .order-items {
+  flex: 1;
 }
 .merchant-order-product {
   display: flex;

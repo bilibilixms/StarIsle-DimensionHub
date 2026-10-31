@@ -2,6 +2,8 @@
 import { ref } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
+import AddressEditor from './AddressEditor.vue'
+import OrderItems from './OrderItems.vue'
 import { getDemoSession, logoutDemo, openLogin } from '@starisle/shared/auth'
 import {
   DEMO_ASSETS,
@@ -11,6 +13,7 @@ import {
   editDemoRecipient,
   type DemoState,
   type DemoOrder,
+  type DemoRecipient,
 } from '@starisle/shared/demo'
 const props = defineProps<{ state: DemoState }>()
 const emit = defineEmits<{ refresh: []; browse: [] }>()
@@ -18,7 +21,7 @@ const section = ref<'orders' | 'favorites'>('orders')
 const busy = ref('')
 const addressSheet = ref(false)
 const recipient = ref({ ...props.state.recipient })
-const addressError = ref('')
+const editingAddressId = ref<string | null>(null)
 async function logout() {
   try {
     await logoutDemo()
@@ -30,24 +33,28 @@ async function logout() {
   }
 }
 function openAddress() {
-  recipient.value = { ...props.state.recipient }
-  addressError.value = ''
+  editingAddressId.value = props.state.defaultAddressId || null
+  recipient.value = props.state.addresses.length
+    ? { ...props.state.recipient }
+    : { name: '', phone: '', address: '' }
   addressSheet.value = true
 }
-function saveAddress() {
+function saveAddress(value: DemoRecipient) {
   try {
-    editDemoRecipient(recipient.value)
+    editDemoRecipient(value, editingAddressId.value)
     emit('refresh')
     addressSheet.value = false
-  } catch (error) {
-    addressError.value = error instanceof Error ? error.message : '请检查收货信息'
+  } catch (cause) {
+    uni.showToast({
+      title: cause instanceof Error ? cause.message : '地址保存失败，请重试',
+      icon: 'none',
+    })
   }
 }
-function syncRecipient(field: 'name' | 'phone' | 'address', event: unknown) {
-  // H5 input updates are throttled; blur carries the latest displayed value.
-  const value = (event as { detail?: { value?: unknown } })?.detail?.value
-  if (typeof value === 'string') recipient.value[field] = value
+function manageAddresses() {
+  uni.navigateTo({ url: '/pages/address/index' })
 }
+
 function receive(order: DemoOrder) {
   if (busy.value) return
   uni.showModal({
@@ -78,7 +85,7 @@ function openOrder(id: string) {
 function reset() {
   uni.showModal({
     title: '清空本机收藏与购物车',
-    content: '清空本机收藏、购物车并恢复演示地址。已支付订单将保留，可在商家端重置共享场景。',
+    content: '清空本机收藏和购物车。收货地址和已支付订单会保留。',
     confirmColor: '#8b5cf6',
     success(result) {
       if (result.confirm) {
@@ -106,7 +113,14 @@ function reset() {
       data-testid="edit-recipient"
       @click="openAddress"
     >
-      演示收货地址：{{ state.recipient.name }} · {{ state.recipient.phone }}
+      {{
+        state.addresses.length
+          ? `演示收货地址：${state.recipient.name} · ${state.recipient.phone}`
+          : '添加收货地址'
+      }}
+    </button>
+    <button class="secondary-button" data-testid="manage-addresses" @click="manageAddresses">
+      管理收货地址（{{ state.addresses.length }}）
     </button>
     <view class="profile-shortcuts">
       <button :class="{ active: section === 'orders' }" @click="section = 'orders'">
@@ -144,14 +158,8 @@ function reset() {
           <text>{{ order.shopName || state.shop.name }}</text>
           <text class="order-status">{{ order.status }}</text>
         </view>
-        <view class="order-product">
-          <image :src="order.cover" mode="aspectFill" />
-          <view>
-            <text class="order-title">{{ order.title }}</text>
-            <text class="order-variant">{{ order.variant }} × {{ order.quantity }}</text>
-            <text class="order-amount">实付 ¥{{ money(order.amount) }}</text>
-          </view>
-        </view>
+        <OrderItems :order="order" compact />
+        <text class="order-amount">实付 ¥{{ money(order.amount) }}</text>
         <text class="order-number">演示订单 {{ order.id }}</text>
         <view v-if="order.carrier && order.tracking" class="order-logistics">
           <text>{{ order.carrier }} · {{ order.tracking }}</text>
@@ -205,39 +213,12 @@ function reset() {
     <button class="reset-button" data-testid="logout" @click="logout">退出登录</button>
     <text class="profile-footnote">这是一座正在生长的小岛。感谢你来做客。</text>
     <Sheet :visible="addressSheet" title="演示收货地址" @close="addressSheet = false">
-      <text class="form-note">用于本地联动演示，请填写虚构信息。</text>
-      <text class="form-label">收货人</text>
-      <input
-        v-model="recipient.name"
-        @blur="syncRecipient('name', $event)"
-        class="form-input"
-        aria-label="收货人"
-        data-testid="recipient-name"
-        maxlength="30"
+      <AddressEditor
+        :value="recipient"
+        :show-default="false"
+        label="保存演示地址"
+        @save="saveAddress"
       />
-      <text class="form-label">手机号</text>
-      <input
-        v-model="recipient.phone"
-        @blur="syncRecipient('phone', $event)"
-        class="form-input"
-        aria-label="手机号"
-        data-testid="recipient-phone"
-        maxlength="11"
-        type="number"
-      />
-      <text class="form-label">收货地址</text>
-      <input
-        v-model="recipient.address"
-        @blur="syncRecipient('address', $event)"
-        class="form-input"
-        aria-label="收货地址"
-        data-testid="recipient-address"
-        maxlength="200"
-      />
-      <text v-if="addressError" class="form-error">{{ addressError }}</text>
-      <button class="primary-button" data-testid="save-recipient" @click="saveAddress">
-        保存演示地址
-      </button>
     </Sheet>
   </view>
 </template>

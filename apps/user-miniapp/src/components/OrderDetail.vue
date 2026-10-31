@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
+import OrderItems from './OrderItems.vue'
 import SyncStatus from '@starisle/ui/SyncStatus.vue'
 import { useDemoSync } from '@starisle/ui/useDemoSync'
 import { getDemoState, money, receiveDemoOrder } from '@starisle/shared/demo'
@@ -38,9 +39,8 @@ function back() {
 function copyNumber() {
   if (order.value) uni.setClipboardData({ data: order.value.id })
 }
-function openProduct() {
-  if (order.value)
-    uni.navigateTo({ url: `/pages/product/detail?id=${encodeURIComponent(order.value.productId)}` })
+function openProduct(productId: string) {
+  uni.navigateTo({ url: `/pages/product/detail?id=${encodeURIComponent(productId)}` })
 }
 function receive() {
   if (!order.value || order.value.status !== '待收货' || busy.value) return
@@ -101,20 +101,7 @@ function receive() {
           <Icon name="bag" tone="purple" :size="17" />
           <text data-testid="order-detail-shop">{{ order.shopName || state.shop.name }}</text>
         </view>
-        <button
-          class="purchased-product"
-          :aria-label="`查看商品：${order.title}`"
-          data-testid="order-detail-product"
-          @click="openProduct"
-        >
-          <image :src="order.cover" mode="aspectFill" class="product-cover" />
-          <view class="product-description">
-            <text class="product-title" data-testid="order-detail-title">{{ order.title }}</text>
-            <text class="product-variant">{{ order.variant }} × {{ order.quantity }}</text>
-            <text class="unit-price">单价 ¥{{ money(order.amount / order.quantity) }}</text>
-          </view>
-          <Icon name="chevron-right" :size="14" />
-        </button>
+        <OrderItems :order="order" detail @open="openProduct" />
         <view class="amounts">
           <view class="detail-row">
             <text>商品金额</text>

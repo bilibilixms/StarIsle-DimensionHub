@@ -1,3 +1,4 @@
+import { pay } from './checkout-flows'
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test'
 import { randomInt, randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
@@ -159,7 +160,7 @@ test('guests browse products, are stopped before writes and return to the select
   await expect(page.getByTestId('detail-title')).toBeVisible()
   await page.getByTestId('buy-now').click()
   await page.getByTestId('confirm-sku').click()
-  await page.getByText('模拟支付', { exact: true }).click()
+  await pay(page)
   await expect(page.getByText('实付 ¥128', { exact: true })).toBeVisible()
   const current = await session(page)
   expect((await state(request, current.token)).orders).toHaveLength(1)
@@ -197,7 +198,7 @@ test('switching accounts isolates and restores orders, favorites and cart', asyn
   await expect(page.getByTestId('detail-cart-count')).toHaveText('1')
   await page.getByTestId('buy-now').click()
   await page.getByTestId('confirm-sku').click()
-  await page.getByText('模拟支付', { exact: true }).click()
+  await pay(page)
   await expect(page.getByText('实付 ¥128', { exact: true })).toBeVisible()
   const first = await session(page)
   const orderId = (await state(request, first.token)).orders[0].id
@@ -277,7 +278,7 @@ test('a registered merchant publishes in the unified app and receives only its o
     await expect(customer.getByText('联动注册小店', { exact: true })).toBeVisible()
     await customer.getByTestId('buy-now').click()
     await customer.getByTestId('confirm-sku').click()
-    await customer.getByText('模拟支付', { exact: true }).click()
+    await pay(customer)
     await expect(customer.getByText('实付 ¥29', { exact: true })).toBeVisible()
     const buyer = await session(customer)
     const order = (await state(request, buyer.token)).orders[0]

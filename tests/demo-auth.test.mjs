@@ -279,3 +279,78 @@ test('merchant registration requires the simulated qualification code before cre
   assert.equal(upgraded.session.account.id, existing.account.id)
   assert.deepEqual(upgraded.session.account.roles, ['user', 'merchant'])
 })
+
+test('multi-shop checkout is atomic, splits one order per shop and keeps shipping scoped', async (t) => {
+  const app = await fixture(t)
+  const buyer = (await app.register('13800000011')).session
+  const merchant = (await app.register('13800000012', 'merchant')).session
+  const originalShop = (await app.login('13800000000', 'merchant')).session
+  const created = await app.call(
+    'commands',
+    {
+      type: 'createProduct',
+      title: '跨店徽章',
+      price: '29',
+      stock: '2',
+      cover: '/static/demo/star-fairy.jpg',
+    },
+    merchant,
+  )
+  const id = created.state.products[0].id
+  const items = [
+    { productId: 'star-fairy', variant: 'standard', quantity: 1, expectedPrice: 12800 },
+    { productId: 'island-card', variant: 'standard', quantity: 2, expectedPrice: 1800 },
+    { productId: id, variant: 'standard', quantity: 3, expectedPrice: 2900 },
+  ]
+  const rejected = await app.call('commands', { ...checkout, items }, buyer)
+  assert.equal(rejected.status, 409)
+  assert.equal(rejected.state.orders.length, 0)
+  assert.equal(rejected.state.products.find((product) => product.id === 'star-fairy').stock, 36)
+  assert.equal(rejected.state.products.find((product) => product.id === id).stock, 2)
+  items[2].quantity = 1
+  const operationId = randomUUID()
+  const paid = await app.call('commands', { ...checkout, items }, buyer, {
+    'X-Idempotency-Key': operationId,
+  })
+  assert.equal(paid.status, 200)
+  assert.equal(paid.orderIds.length, 2)
+  assert.equal(
+    paid.state.orders.reduce((sum, order) => sum + order.amount, 0),
+    19300,
+  )
+  const originalOrder = paid.state.orders.find((order) => order.shopId === 'demo-shop')
+  const newOrder = paid.state.orders.find((order) => order.shopId === merchant.account.shopId)
+  assert.equal(originalOrder.items.length, 2)
+  assert.equal(originalOrder.quantity, 3)
+  assert.equal(originalOrder.amount, 16400)
+  assert.equal(newOrder.amount, 2900)
+  assert.equal((await app.call('state', undefined, merchant)).state.orders.length, 1)
+  assert.equal((await app.call('state', undefined, originalShop)).state.orders.length, 1)
+  assert.equal(
+    (
+      await app.call(
+        'commands',
+        { type: 'ship', id: originalOrder.id, carrier: '顺丰', tracking: 'SF1234567890' },
+        merchant,
+      )
+    ).status,
+    403,
+  )
+  await app.call(
+    'commands',
+    { type: 'ship', id: newOrder.id, carrier: '顺丰', tracking: 'SF1234567890' },
+    merchant,
+  )
+  assert.equal(
+    (await app.call('state', undefined, buyer)).state.orders.find(
+      (order) => order.id === originalOrder.id,
+    ).status,
+    '待发货',
+  )
+  const retry = await app.call('commands', { ...checkout, items }, buyer, {
+    'X-Idempotency-Key': operationId,
+  })
+  assert.deepEqual(retry.orderIds, paid.orderIds)
+  assert.equal(retry.state.orders.length, 2)
+  assert.equal(retry.state.products.find((product) => product.id === id).stock, 1)
+})

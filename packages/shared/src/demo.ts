@@ -3,6 +3,9 @@ import {
   variantPrice,
   validateRecipient,
   validateDemoStock,
+  DEMO_ASSETS,
+  productShopId,
+  orderItems,
   type DemoRole,
   type DemoVariant,
   type DemoProduct,
@@ -12,6 +15,7 @@ import {
   type DemoCommand,
   type DemoRecipient,
   type DemoShop,
+  type DemoOrderItem,
 } from './demo-domain'
 import { getDemoSession, clearDemoSession, openLogin, demoApiBase, requireDemoLogin } from './auth'
 export {
@@ -23,8 +27,25 @@ export {
   LOW_STOCK_LIMIT,
   productShopId,
   DEMO_SHOP_ID,
+  orderItems,
 } from './demo-domain'
+export { validateRecipient } from './demo-domain'
 export type { DemoProduct, DemoOrder, DemoOrderStatus, DemoRecipient } from './demo-domain'
+export interface DemoAddress extends DemoRecipient {
+  id: string
+}
+export interface CheckoutPreviewItem extends DemoOrderItem {
+  variantKey: DemoVariant
+  shopId: string
+  shopName: string
+}
+export interface CheckoutDraft {
+  id: string
+  command: DemoCheckout
+  items: CheckoutPreviewItem[]
+  addressId?: string
+  orderIds: string[]
+}
 
 export interface DemoCartItem {
   productId: string
@@ -42,6 +63,8 @@ export interface DemoState {
   products: DemoProduct[]
   shop: { name: string; description: string }
   shops: DemoShop[]
+  addresses: DemoAddress[]
+  defaultAddressId?: string
 }
 interface LocalData {
   version: 2
@@ -50,6 +73,9 @@ interface LocalData {
   recipient: DemoRecipient
   marketplace?: DemoMarketplace
   pending: Record<string, string>
+  addresses: DemoAddress[]
+  defaultAddressId?: string
+  checkout?: CheckoutDraft
 }
 export interface DemoCheckout {
   type: 'checkout'
@@ -71,7 +97,16 @@ function key() {
 }
 function load(storageKey = key()): LocalData {
   const stored = uni.getStorageSync(storageKey) as LocalData | undefined
-  if (stored?.version === 2) return stored
+  if (stored?.version === 2) {
+    if (!stored.addresses) {
+      const keep =
+        getDemoSession()?.account.id === 'demo-user' ||
+        JSON.stringify(stored.recipient) !== JSON.stringify(DEMO_RECIPIENT)
+      stored.addresses = keep ? [{ id: 'legacy-default', ...stored.recipient }] : []
+      stored.defaultAddressId = stored.addresses[0]?.id
+    }
+    return stored
+  }
   const legacy =
     getDemoSession()?.account.id === 'demo-user'
       ? (uni.getStorageSync('starisle.visual-demo.v1') as Partial<DemoState> | undefined)
@@ -82,6 +117,11 @@ function load(storageKey = key()): LocalData {
     cart: Array.isArray(legacy?.cart) ? legacy.cart : [],
     recipient: { ...DEMO_RECIPIENT },
     pending: {},
+    addresses:
+      getDemoSession()?.account.id === 'demo-user'
+        ? [{ id: 'legacy-default', ...DEMO_RECIPIENT }]
+        : [],
+    defaultAddressId: getDemoSession()?.account.id === 'demo-user' ? 'legacy-default' : undefined,
   }
 }
 function save(data: LocalData, storageKey = key(), role = activeRole): DemoState {
@@ -95,6 +135,8 @@ export function getDemoState(storageKey = key(), role = activeRole): DemoState {
     favorites: data.favorites,
     cart: data.cart,
     recipient: data.recipient,
+    addresses: data.addresses,
+    defaultAddressId: data.defaultAddressId,
     products: data.marketplace?.products || [],
     orders: role === 'user' && getDemoSession() ? data.marketplace?.orders || [] : [],
     merchantOrders: role === 'merchant' ? data.marketplace?.orders || [] : [],
@@ -187,7 +229,7 @@ export async function syncDemoState(): Promise<DemoState> {
 const inFlight = new Map<string, Promise<DemoState>>()
 function mutate(
   command: DemoCommand,
-  afterSuccess?: (data: LocalData) => void,
+  afterSuccess?: (data: LocalData, orderIds?: string[]) => void,
 ): Promise<DemoState> {
   const fingerprint = `${key()}:${JSON.stringify(command)}`
   const existing = inFlight.get(fingerprint)
@@ -200,7 +242,7 @@ function mutate(
 }
 async function execute(
   command: DemoCommand,
-  afterSuccess?: (data: LocalData) => void,
+  afterSuccess?: (data: LocalData, orderIds?: string[]) => void,
 ): Promise<DemoState> {
   const fingerprint = JSON.stringify(command)
   const storageKey = key()
@@ -213,7 +255,7 @@ async function execute(
     const response = await request('POST', command, id, storageKey, role)
     merge(response.state, storageKey, role)
     const latest = load(storageKey)
-    afterSuccess?.(latest)
+    afterSuccess?.(latest, response.orderIds)
     delete latest.pending[fingerprint]
     return save(latest, storageKey, role)
   } catch (error) {
@@ -234,16 +276,212 @@ export function toggleFavorite(id: string): DemoState {
     : [...data.favorites, id]
   return save(data)
 }
-export function editDemoRecipient(recipient: DemoRecipient): DemoState {
+export function editDemoRecipient(recipient: DemoRecipient, addressId?: string | null): DemoState {
   const data = load()
-  data.recipient = validateRecipient(recipient)
+  const fields = validateRecipient(recipient)
+  const targetId = addressId === undefined ? data.defaultAddressId : addressId
+  const existing = data.addresses.find((address) => address.id === targetId)
+  if (targetId && !existing) throw new Error('地址不存在，请重新选择')
+  if (existing) Object.assign(existing, fields)
+  else {
+    const id = localId('address')
+    data.addresses.push({ id, ...fields })
+    if (!data.defaultAddressId) data.defaultAddressId = id
+  }
+  const preferred = data.addresses.find((address) => address.id === data.defaultAddressId) || fields
+  data.recipient = { name: preferred.name, phone: preferred.phone, address: preferred.address }
+  syncDraftAddress(data)
   return save(data)
+}
+function localId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+function pendingDraft(data: LocalData, draft: CheckoutDraft): boolean {
+  return !!data.pending[JSON.stringify(draft.command)]
+}
+function syncDraftAddress(data: LocalData) {
+  const draft = data.checkout
+  if (!draft || draft.orderIds.length || pendingDraft(data, draft)) return
+  const selected = data.addresses.find((address) => address.id === draft.addressId)
+  if (selected)
+    draft.command.recipient = {
+      name: selected.name,
+      phone: selected.phone,
+      address: selected.address,
+    }
+  else draft.addressId = undefined
+}
+export function saveDemoAddress(
+  recipient: DemoRecipient,
+  id?: string,
+  makeDefault = false,
+): DemoAddress {
+  const data = load()
+  const fields = validateRecipient(recipient)
+  let address = id ? data.addresses.find((address) => address.id === id) : undefined
+  if (id && !address) throw new Error('地址不存在，请重新选择')
+  if (address) Object.assign(address, fields)
+  else {
+    address = { id: localId('address'), ...fields }
+    data.addresses.push(address)
+  }
+  if (makeDefault || !data.defaultAddressId) data.defaultAddressId = address.id
+  else if (id === data.defaultAddressId && data.addresses.length > 1)
+    data.defaultAddressId = data.addresses.find((item) => item.id !== id)!.id
+  const preferred =
+    data.addresses.find((address) => address.id === data.defaultAddressId) || DEMO_RECIPIENT
+  data.recipient = { name: preferred.name, phone: preferred.phone, address: preferred.address }
+  syncDraftAddress(data)
+  save(data)
+  return { ...address }
+}
+export function setDefaultDemoAddress(id: string): DemoState {
+  const data = load()
+  const address = data.addresses.find((address) => address.id === id)
+  if (!address) throw new Error('地址不存在，请重新选择')
+  data.defaultAddressId = id
+  data.recipient = { name: address.name, phone: address.phone, address: address.address }
+  return save(data)
+}
+export function removeDemoAddress(id: string): DemoState {
+  const data = load()
+  data.addresses = data.addresses.filter((address) => address.id !== id)
+  if (data.defaultAddressId === id) data.defaultAddressId = data.addresses[0]?.id
+  const preferred =
+    data.addresses.find((address) => address.id === data.defaultAddressId) || DEMO_RECIPIENT
+  data.recipient = { name: preferred.name, phone: preferred.phone, address: preferred.address }
+  syncDraftAddress(data)
+  return save(data)
+}
+function previewItems(command: DemoCheckout, data: LocalData): CheckoutPreviewItem[] {
+  return command.items.map((item) => {
+    const product = data.marketplace?.products.find((product) => product.id === item.productId)
+    const shopId = product ? productShopId(product) : 'demo-shop'
+    const shop = data.marketplace?.shops?.find((shop) => shop.id === shopId)
+    return {
+      productId: item.productId,
+      title: product?.title || '已下架商品',
+      cover: product?.cover || DEMO_ASSETS.figurine,
+      variant: item.variant === 'gift' ? '礼盒版' : '标准版',
+      variantKey: item.variant,
+      quantity: item.quantity,
+      unitPrice: item.expectedPrice,
+      amount: item.expectedPrice * item.quantity,
+      shopId,
+      shopName: shop?.name || data.marketplace?.shop.name || '星屿小店',
+    }
+  })
+}
+export function beginCheckout(command: DemoCheckout): CheckoutDraft {
+  const data = load()
+  if (
+    data.checkout &&
+    !data.checkout.orderIds.length &&
+    JSON.stringify(data.checkout.command) === JSON.stringify(command)
+  )
+    return data.checkout
+  const pending = !!data.pending[JSON.stringify(command)]
+  const address = pending
+    ? data.addresses.find(
+        (address) =>
+          address.name === command.recipient.name &&
+          address.phone === command.recipient.phone &&
+          address.address === command.recipient.address,
+      )
+    : data.addresses.find((address) => address.id === data.defaultAddressId)
+  const draft: CheckoutDraft = {
+    id: localId('checkout'),
+    command: JSON.parse(JSON.stringify(command)),
+    items: previewItems(command, data),
+    addressId: address?.id,
+    orderIds: [],
+  }
+  data.checkout = draft
+  save(data)
+  return draft
+}
+export function openCheckout(command: DemoCheckout) {
+  const draft = beginCheckout(command)
+  uni.navigateTo({ url: `/pages/checkout/index?id=${encodeURIComponent(draft.id)}` })
+}
+export function getCheckoutDraft(id: string): CheckoutDraft | undefined {
+  const draft = load().checkout
+  return draft?.id === id ? draft : undefined
+}
+export function checkoutPending(draft: CheckoutDraft): boolean {
+  return pendingDraft(load(), draft)
+}
+export function selectCheckoutAddress(draftId: string, addressId: string) {
+  const data = load()
+  const draft = data.checkout
+  if (!draft || draft.id !== draftId) throw new Error('待确认订单已失效，请重新选择商品')
+  if (pendingDraft(data, draft) || draft.orderIds.length)
+    throw new Error('支付结果待确认或订单已提交，无法更改收货信息')
+  const address = data.addresses.find((address) => address.id === addressId)
+  if (!address) throw new Error('地址不存在，请重新选择')
+  draft.addressId = address.id
+  draft.command.recipient = { name: address.name, phone: address.phone, address: address.address }
+  save(data)
+}
+export function checkoutProblem(draft: CheckoutDraft, state = getDemoState()): string {
+  if (draft.orderIds.length || checkoutPending(draft)) return ''
+  try {
+    validateDemoStock(state.products, draft.command.items)
+    if (draft.command.datasetId !== load().marketplace?.datasetId)
+      return '演示场景已重置，请更新商品信息后重新确认'
+    for (const item of draft.command.items) {
+      const product = state.products.find((product) => product.id === item.productId)!
+      if (variantPrice(product, item.variant) !== item.expectedPrice)
+        return '商品价格已变化，请更新商品信息后重新确认'
+    }
+    if (!draft.addressId || !state.addresses.some((address) => address.id === draft.addressId))
+      return '请选择收货地址'
+    validateRecipient(draft.command.recipient)
+    return ''
+  } catch (cause) {
+    return cause instanceof Error ? cause.message : '请检查商品和收货信息'
+  }
+}
+export function refreshCheckoutDraft(id: string): CheckoutDraft {
+  const data = load()
+  const draft = data.checkout
+  if (!draft || draft.id !== id) throw new Error('待确认订单已失效，请重新选择商品')
+  if (pendingDraft(data, draft) || draft.orderIds.length) throw new Error('请先确认上次支付结果')
+  validateDemoStock(data.marketplace?.products || [], draft.command.items)
+  draft.command.items = draft.command.items.map((item) =>
+    line(item.productId, item.variant, item.quantity),
+  )
+  draft.command.datasetId = data.marketplace?.datasetId
+  draft.items = previewItems(draft.command, data)
+  syncDraftAddress(data)
+  save(data)
+  return draft
+}
+export async function submitCheckout(id: string): Promise<CheckoutDraft> {
+  const draft = getCheckoutDraft(id)
+  if (!draft) throw new Error('待确认订单已失效，请重新选择商品')
+  if (draft.orderIds.length) return draft
+  const problem = checkoutProblem(draft)
+  if (problem) throw new Error(problem)
+  await mutate(draft.command, (data, orderIds) => {
+    if (!orderIds?.length) throw new Error('订单结果暂未确认，请重试')
+    if (draft.command.source === 'cart') {
+      for (const bought of draft.command.items) {
+        const item = data.cart.find(
+          (item) => item.productId === bought.productId && item.variant === bought.variant,
+        )
+        if (item) item.quantity -= bought.quantity
+      }
+      data.cart = data.cart.filter((item) => item.quantity > 0)
+    }
+    if (data.checkout?.id === id) data.checkout.orderIds = orderIds || []
+  })
+  return getCheckoutDraft(id) || draft
 }
 export function resetLocalDemoState(): DemoState {
   const data = load()
   data.cart = []
   data.favorites = []
-  data.recipient = { ...DEMO_RECIPIENT }
   return save(data)
 }
 export function resetDemoState(): Promise<DemoState> {

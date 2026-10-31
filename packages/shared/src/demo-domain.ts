@@ -20,6 +20,15 @@ export interface DemoRecipient {
   address: string
 }
 export type DemoOrderStatus = '待发货' | '待收货' | '已完成'
+export interface DemoOrderItem {
+  productId: string
+  title: string
+  cover: string
+  variant: string
+  quantity: number
+  unitPrice: number
+  amount: number
+}
 export interface DemoOrder {
   id: string
   shopId?: string
@@ -39,6 +48,22 @@ export interface DemoOrder {
   completedAt?: string
   carrier?: string
   tracking?: string
+  items?: DemoOrderItem[]
+}
+export function orderItems(order: DemoOrder): DemoOrderItem[] {
+  return order.items?.length
+    ? order.items
+    : [
+        {
+          productId: order.productId,
+          title: order.title,
+          cover: order.cover,
+          variant: order.variant,
+          quantity: order.quantity,
+          unitPrice: order.amount / order.quantity,
+          amount: order.amount,
+        },
+      ]
 }
 export interface DemoMarketplace {
   version: 1
@@ -183,22 +208,46 @@ export function applyDemoCommand(
       state.products,
       lines.map(({ item }) => item),
     )
+    const groups = new Map<string, DemoOrderItem[]>()
     for (const { item, product } of lines) {
-      const id = `XY${makeId()}`
       product.stock -= item.quantity
       product.sold += item.quantity
+      const shopId = productShopId(product)
+      const items = groups.get(shopId) || []
+      const variant = item.variant === 'gift' ? '礼盒版' : '标准版'
+      const previous = items.find(
+        (line) => line.productId === product.id && line.variant === variant,
+      )
+      if (previous) {
+        previous.quantity += item.quantity
+        previous.amount += item.expectedPrice * item.quantity
+      } else
+        items.push({
+          productId: product.id,
+          title: product.title,
+          cover: product.cover,
+          variant,
+          quantity: item.quantity,
+          unitPrice: item.expectedPrice,
+          amount: item.expectedPrice * item.quantity,
+        })
+      groups.set(shopId, items)
+    }
+    for (const [shopId, items] of groups) {
+      const id = `XY${makeId()}`
+      const first = items[0]!
       state.orders.unshift({
         id,
-        shopId: productShopId(product),
+        shopId,
         shopName:
-          marketplaceShops(state).find((shop) => shop.id === productShopId(product))?.name ||
-          state.shop.name,
-        productId: product.id,
-        title: product.title,
-        cover: product.cover,
-        variant: item.variant === 'gift' ? '礼盒版' : '标准版',
-        quantity: item.quantity,
-        amount: variantPrice(product, item.variant) * item.quantity,
+          marketplaceShops(state).find((shop) => shop.id === shopId)?.name || state.shop.name,
+        productId: first.productId,
+        title: first.title,
+        cover: first.cover,
+        variant: first.variant,
+        quantity: items.reduce((sum, item) => sum + item.quantity, 0),
+        amount: items.reduce((sum, item) => sum + item.amount, 0),
+        items,
         status: '待发货',
         buyer: actor.nickname,
         buyerId: actor.id,

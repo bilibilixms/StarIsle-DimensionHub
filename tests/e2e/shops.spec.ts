@@ -1,3 +1,4 @@
+import { pay } from './checkout-flows'
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { randomInt, randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
@@ -220,7 +221,7 @@ test('a visitor can register after choosing a store product and the purchase bel
   await expect(page).toHaveURL(new RegExp(`product/detail\\?id=${id}`))
   await page.getByTestId('buy-now').click()
   await page.getByTestId('confirm-sku').click()
-  await page.getByText('模拟支付', { exact: true }).click()
+  await pay(page)
   await expect(page.getByText('实付 ¥29', { exact: true })).toBeVisible()
   const response = await request.get(`${api}/state`, {
     headers: { Authorization: `Bearer ${merchant.token}`, 'X-Demo-Role': 'merchant' },

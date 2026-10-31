@@ -1,3 +1,4 @@
+import { pay } from './checkout-flows'
 import { test, expect } from './fixtures'
 import type { APIRequestContext, Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
@@ -116,8 +117,8 @@ test('a reset removes missing cart items and allows a new product to be paid for
   await expect(page.getByTestId(`cart-item-${removedId}`)).toHaveCount(0)
   await expect(page.getByTestId('cart-checkout')).not.toHaveAttribute('disabled', 'true')
   await page.getByTestId('cart-checkout').click()
-  await expect(page.locator('uni-modal')).toContainText('¥128')
-  await page.getByText('模拟支付', { exact: true }).click()
+  await expect(page.getByTestId('checkout-page')).toContainText('¥128')
+  await pay(page)
   await expect(page.getByText('实付 ¥128', { exact: true })).toBeVisible()
   expect((await snapshot(request)).orders).toHaveLength(1)
 })
@@ -156,24 +157,27 @@ for (const committed of [true, false]) {
       } else await route.continue()
     })
     await page.getByTestId('confirm-sku').click()
-    await page.getByText('模拟支付', { exact: true }).click()
+    await pay(page, false)
     await expect(
       page.getByText('暂时无法连接演示服务，请检查服务后重试', { exact: true }),
     ).toBeVisible()
     const initial = await snapshot(request)
     expect(initial.orders).toHaveLength(committed ? 1 : 0)
     await command(request, 'merchant', { type: 'toggleProduct', id: 'star-fairy' })
+    await page.getByTestId('checkout-back').click()
     await page.reload()
     await expect(page.getByText('这份好物暂时不在岛上')).toBeVisible()
     await expect(page.getByTestId('buy-now')).toHaveText('确认支付结果')
     await expect(page.getByTestId('add-to-cart')).toHaveCount(0)
     await page.getByTestId('buy-now').click()
-    await expect(page.locator('uni-modal')).toContainText('¥128')
-    await page.getByText('模拟支付', { exact: true }).click()
+    await expect(page.getByTestId('checkout-page')).toContainText('¥128')
+    await pay(page, committed)
     if (committed)
       await expect(page.getByTestId(`user-order-${initial.orders[0].id}`)).toBeVisible()
     else {
-      await expect(page.getByText('商品已下架，请刷新后重新选择', { exact: true })).toBeVisible()
+      await expect(page.getByTestId('checkout-error')).toContainText('商品已下架')
+      await expect(page.getByTestId('confirm-payment')).toHaveAttribute('disabled', 'true')
+      await page.getByTestId('checkout-back').click()
       await expect(page.getByTestId('buy-now')).toHaveCount(0)
       await page.reload()
       await expect(page.getByTestId('buy-now')).toHaveCount(0)
@@ -217,11 +221,8 @@ test('cancelling payment leaves orders and inventory unchanged and allows retry'
   await page.goto(detail)
   await page.getByTestId('buy-now').click()
   await page.getByTestId('confirm-sku').click()
-  await page
-    .locator('uni-modal')
-    .getByText(/^(取消|Cancel)$/)
-    .click()
-  await expect(page.locator('uni-modal')).not.toBeVisible()
+  await page.getByTestId('checkout-back').click()
+  await page.getByTestId('buy-now').click()
   await expect(page.getByTestId('confirm-sku')).not.toHaveAttribute('disabled', 'true')
   const saved = await snapshot(request)
   expect(saved.orders).toHaveLength(0)

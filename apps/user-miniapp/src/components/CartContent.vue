@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
 import {
-  checkoutCart,
+  openCheckout,
   prepareCartCheckout,
   money,
   updateCart,
@@ -64,29 +64,8 @@ async function checkout() {
       icon: 'none',
     })
   }
-  const checkoutDraft = prepared
-  uni.showModal({
-    title: '确认模拟支付',
-    content: `共 ${selectedCount.value} 件商品，合计 ¥${money(checkoutDraft.items.reduce((sum, item) => sum + item.expectedPrice * item.quantity, 0))}。收货：${checkoutDraft.recipient.name}，${checkoutDraft.recipient.address}。仅生成联动演示订单，不会产生真实扣款。`,
-    confirmText: '模拟支付',
-    confirmColor: '#8b5cf6',
-    async success(result) {
-      if (!result.confirm) return
-      if (busy.value) return
-      busy.value = true
-      try {
-        await checkoutCart(checkoutDraft)
-        emit('refresh')
-        emit('completed')
-        uni.showToast({ title: '模拟支付成功', icon: 'success' })
-      } catch (error) {
-        emit('refresh')
-        uni.showToast({ title: error instanceof Error ? error.message : '下单失败', icon: 'none' })
-      } finally {
-        busy.value = false
-      }
-    },
-  })
+  openCheckout(prepared)
+
   busy.value = false
 }
 </script>

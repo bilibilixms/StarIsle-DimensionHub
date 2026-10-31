@@ -7,7 +7,7 @@ import Sheet from '@starisle/ui/Sheet.vue'
 import { requireDemoLogin } from '@starisle/shared/auth'
 import {
   addToCart,
-  buyDemoProduct,
+  openCheckout,
   prepareBuyCheckout,
   pendingBuyCheckout,
   getDemoState,
@@ -112,27 +112,8 @@ async function confirm() {
     } else {
       const checkoutDraft =
         pendingPurchase.value || prepareBuyCheckout(id.value, variant.value, quantity.value)
-      uni.showModal({
-        title: '确认模拟支付',
-        content: `合计 ¥${money(checkoutDraft.items[0]!.expectedPrice * checkoutDraft.items[0]!.quantity)}。收货：${checkoutDraft.recipient.name}，${checkoutDraft.recipient.address}。这是一笔联动演示订单，不会产生真实扣款。`,
-        confirmText: '模拟支付',
-        confirmColor: '#8b5cf6',
-        async success(result) {
-          if (!result.confirm) return
-          if (busy.value) return
-          busy.value = true
-          try {
-            await buyDemoProduct(checkoutDraft)
-            sheet.value = ''
-            uni.reLaunch({ url: '/pages/index/index?tab=profile' })
-          } catch (cause) {
-            state.value = getDemoState()
-            error.value = cause instanceof Error ? cause.message : '请稍后重试'
-          } finally {
-            busy.value = false
-          }
-        },
-      })
+      openCheckout(checkoutDraft)
+      sheet.value = ''
     }
   } catch (cause) {
     state.value = getDemoState()
@@ -381,13 +362,16 @@ function share() {
         <text v-if="sheet === 'buy' && pendingPurchase" class="form-note">
           上次支付结果待确认，重试不会重复下单。
         </text>
-        <view v-if="sheet === 'buy'" class="demo-address">
+        <view v-if="sheet === 'buy' && state.addresses.length" class="demo-address">
           <Icon name="pin" tone="purple" :size="17" />
           <view>
             <text>{{ state.recipient.name }} · 演示收货地址</text>
             <text>{{ state.recipient.address }}</text>
           </view>
         </view>
+        <text v-if="sheet === 'buy' && !state.addresses.length" class="form-note">
+          下一步填写收货地址并核对订单。
+        </text>
         <text v-if="error" class="form-error">{{ error }}</text>
         <text class="form-note">
           {{
@@ -411,7 +395,7 @@ function share() {
                   ? '已售罄'
                   : '已达库存上限'
                 : sheet === 'buy'
-                  ? `模拟下单 · ¥${money(price * quantity)}`
+                  ? `确认订单 · ¥${money(price * quantity)}`
                   : `确定加入 · ¥${money(price * quantity)}`
           }}
         </button>

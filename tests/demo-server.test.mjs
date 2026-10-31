@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { startDemoServer } from '../scripts/demo-server.mjs'
+import { orderItems } from '../packages/shared/src/demo-domain.ts'
 
 const recipient = { name: '演示买家', phone: '13800000000', address: '上海市 演示路 1 号' }
 function checkout(
@@ -361,4 +362,80 @@ test('stock remains validated when optional edits omit it or supply an invalid v
   const saved = await app.call('user')
   assert.equal(saved.state.products[0].stock, 36)
   assert.equal(saved.state.products.length, 4)
+})
+
+test('checkout combines same-shop products and variants into one immutable order', async (t) => {
+  const app = await fixture(t)
+  const paid = await app.call(
+    'user',
+    checkout([
+      { productId: 'star-fairy', variant: 'standard', quantity: 2, expectedPrice: 12800 },
+      { productId: 'star-fairy', variant: 'gift', quantity: 1, expectedPrice: 15800 },
+      { productId: 'island-card', variant: 'standard', quantity: 3, expectedPrice: 1800 },
+    ]),
+  )
+  assert.equal(paid.status, 200)
+  assert.equal(paid.orderIds.length, 1)
+  const order = paid.state.orders[0]
+  assert.equal(order.quantity, 6)
+  assert.equal(order.amount, 46800)
+  assert.equal(order.items.length, 3)
+  assert.deepEqual(
+    order.items.map((item) => [item.variant, item.quantity, item.unitPrice, item.amount]),
+    [
+      ['标准版', 2, 12800, 25600],
+      ['礼盒版', 1, 15800, 15800],
+      ['标准版', 3, 1800, 5400],
+    ],
+  )
+  assert.equal(paid.state.products.find((product) => product.id === 'star-fairy').stock, 33)
+  assert.equal(paid.state.products.find((product) => product.id === 'island-card').stock, 117)
+  await app.call('merchant', {
+    type: 'editProduct',
+    id: 'star-fairy',
+    title: '后来改名',
+    price: '199',
+  })
+  const saved = (await app.call('user')).state.orders[0]
+  assert.deepEqual(saved.items, order.items)
+  assert.deepEqual(saved.recipient, recipient)
+  await app.call('merchant', {
+    type: 'ship',
+    id: order.id,
+    carrier: '顺丰',
+    tracking: 'SF1234567890',
+  })
+  assert.equal((await app.call('user', { type: 'receive', id: order.id })).status, 200)
+  assert.equal((await app.call('user')).state.orders[0].status, '已完成')
+})
+
+test('duplicate checkout lines merge without losing quantity or stock deduction', async (t) => {
+  const app = await fixture(t)
+  const paid = await app.call(
+    'user',
+    checkout([
+      { productId: 'star-fairy', variant: 'standard', quantity: 1, expectedPrice: 12800 },
+      { productId: 'star-fairy', variant: 'standard', quantity: 2, expectedPrice: 12800 },
+    ]),
+  )
+  assert.equal(paid.status, 200)
+  assert.equal(paid.state.orders.length, 1)
+  assert.equal(paid.state.orders[0].items.length, 1)
+  assert.equal(paid.state.orders[0].items[0].quantity, 3)
+  assert.equal(paid.state.orders[0].amount, 38400)
+  assert.equal(paid.state.products[0].stock, 33)
+})
+
+test('legacy single-product orders keep their original item snapshot without mutation', () => {
+  const order = {
+    productId: 'old-product',
+    title: '旧商品',
+    cover: 'old.jpg',
+    variant: '礼盒版',
+    quantity: 2,
+    amount: 31600,
+  }
+  const original = structuredClone(order)
+  assert.deepEqual(orderItems(order), [{ ...original, unitPrice: 15800 }])
+  assert.deepEqual(order, original)
 })

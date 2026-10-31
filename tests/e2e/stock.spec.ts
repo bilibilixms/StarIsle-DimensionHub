@@ -1,3 +1,4 @@
+import { pay } from './checkout-flows'
 import { test, expect } from './fixtures'
 import type { APIRequestContext, Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
@@ -79,8 +80,8 @@ test('a live inventory drop reduces the selection and sold-out goods cannot be p
   await expect(page.getByTestId('sku-quantity')).toHaveText('1')
   await expect(page.getByTestId('quantity-plus')).toHaveAttribute('disabled', 'true')
   await page.getByTestId('confirm-sku').click()
-  await expect(page.locator('uni-modal')).toContainText('¥128')
-  await page.getByText('模拟支付', { exact: true }).click()
+  await expect(page.getByTestId('checkout-page')).toContainText('¥128')
+  await pay(page)
   await expect(page.getByText('实付 ¥128', { exact: true })).toBeVisible()
   const paid = await snapshot(request)
   expect(paid.orders).toHaveLength(1)
@@ -103,10 +104,12 @@ test('stock reduced after payment confirmation rejects the original two-unit ord
   await page.getByTestId('buy-now').click()
   await page.getByTestId('quantity-plus').click()
   await page.getByTestId('confirm-sku').click()
-  await expect(page.locator('uni-modal')).toContainText('¥256')
+  await expect(page.getByTestId('checkout-page')).toContainText('¥256')
   await stock(request, 1)
-  await page.getByText('模拟支付', { exact: true }).click()
-  await expect(page.getByText(/库存不足，仅剩 1 件/)).toBeVisible()
+  await expect(page.getByTestId('checkout-error')).toContainText('库存不足，仅剩 1 件')
+  await expect(page.getByTestId('confirm-payment')).toHaveAttribute('disabled', 'true')
+  await page.getByTestId('checkout-back').click()
+  await page.getByTestId('buy-now').click()
   await expect(page.getByTestId('sku-quantity')).toHaveText('1')
   const saved = await snapshot(request)
   expect(saved.orders).toHaveLength(0)
@@ -135,7 +138,7 @@ test('cart checks the combined selected quantity across variants against one uni
   await gift.getByLabel('选择商品', { exact: true }).click()
   await expect(page.getByTestId('cart-checkout')).not.toHaveAttribute('disabled', 'true')
   await page.getByTestId('cart-checkout').click()
-  await page.getByText('模拟支付', { exact: true }).click()
+  await pay(page)
   await expect(page.getByText('实付 ¥128', { exact: true })).toBeVisible()
   const paid = await snapshot(request)
   expect(paid.orders).toHaveLength(1)
@@ -162,7 +165,7 @@ for (const source of ['cart', 'buy'] as const) {
       } else await route.continue()
     })
     await page.getByTestId(source === 'cart' ? 'cart-checkout' : 'confirm-sku').click()
-    await page.getByText('模拟支付', { exact: true }).click()
+    await pay(page, false)
     await expect(
       page.getByText('暂时无法连接演示服务，请检查服务后重试', { exact: true }),
     ).toBeVisible()
@@ -173,16 +176,9 @@ for (const source of ['cart', 'buy'] as const) {
             .stock,
       )
       .toBe(0)
-    if (source === 'cart') {
-      await expect(page.getByTestId('cart-stock')).toContainText('已售罄')
-      await expect(page.getByTestId('cart-checkout')).not.toHaveAttribute('disabled', 'true')
-      await page.getByTestId('cart-checkout').click()
-    } else {
-      await expect(page.getByTestId('sku-stock')).toHaveText('已售罄')
-      await expect(page.getByTestId('confirm-sku')).not.toHaveAttribute('disabled', 'true')
-      await page.getByTestId('confirm-sku').click()
-    }
-    await page.getByText('模拟支付', { exact: true }).click()
+    await expect(page.getByTestId('checkout-item-stock')).toContainText('已售罄')
+    await expect(page.getByTestId('confirm-payment')).not.toHaveAttribute('disabled', 'true')
+    await pay(page)
     await expect(page.getByText('实付 ¥128', { exact: true })).toBeVisible()
     const saved = await snapshot(request)
     expect(saved.orders).toHaveLength(1)

@@ -1,3 +1,4 @@
+import { pay } from './checkout-flows'
 import { test, expect } from './fixtures'
 import { mkdir } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -54,7 +55,7 @@ test('shopping preserves local favorites and shares paid orders with the demo se
   await page.getByLabel('购物车', { exact: true }).click()
   await expect(page.getByTestId('cart-total')).toHaveText('¥316')
   await page.getByTestId('cart-checkout').click()
-  await page.getByText('模拟支付', { exact: true }).click()
+  await pay(page)
   await expect(page.getByText('实付 ¥316', { exact: true })).toBeVisible()
   await page.reload()
   await page.getByTestId('nav-profile').click()
@@ -85,7 +86,7 @@ test('buy now creates its own order and preserves the existing cart', async ({ p
   await page.getByTestId('buy-now').click()
   await page.getByTestId('variant-gift').click()
   await page.getByTestId('confirm-sku').click()
-  await page.getByText('模拟支付', { exact: true }).click()
+  await pay(page)
   await expect(page.getByText('实付 ¥158', { exact: true })).toBeVisible()
   await page.getByTestId('nav-cart').click()
   await expect(page.getByTestId('cart-total')).toHaveText('¥128')
@@ -226,8 +227,8 @@ test('merchant publishes a product and the two live apps complete the same order
   await page.getByTestId('buy-now').click()
   await expect(page.getByText('上海市 联动路 8 号（演示地址）', { exact: true })).toBeVisible()
   await page.getByTestId('confirm-sku').click()
-  await expect(page.locator('uni-modal')).toContainText('联动路 8 号')
-  await page.getByText('模拟支付', { exact: true }).click()
+  await expect(page.getByTestId('checkout-page')).toContainText('联动路 8 号')
+  await pay(page)
   await expect(page.getByText('实付 ¥39.90', { exact: true })).toBeVisible()
   const order = (await snapshot(request)).orders[0]
   await expect(shop.getByTestId(`order-${order.id}`)).toBeVisible()
@@ -270,16 +271,17 @@ test('a lost payment response can be retried after reload without a second order
     } else await route.continue()
   })
   await page.getByTestId('cart-checkout').click()
-  await page.getByText('模拟支付', { exact: true }).click()
+  await pay(page, false)
   await expect(
     page.getByText('暂时无法连接演示服务，请检查服务后重试', { exact: true }),
   ).toBeVisible()
   expect((await snapshot(request)).orders).toHaveLength(1)
   await page.reload()
+  await page.getByTestId('checkout-back').click()
   await page.getByTestId('nav-cart').click()
   await expect(page.getByTestId('cart-total')).toHaveText('¥128')
   await page.getByTestId('cart-checkout').click()
-  await page.getByText('模拟支付', { exact: true }).click()
+  await pay(page)
   await expect(page.getByText('实付 ¥128', { exact: true })).toBeVisible()
   const state = await snapshot(request)
   expect(state.orders).toHaveLength(1)
@@ -304,7 +306,7 @@ test('offline payment fails visibly and reconnecting restores the shared flow', 
   await page.getByTestId('retry-sync').click()
   await expect(page.getByTestId('sync-status')).toContainText('已连接')
   await page.getByTestId('cart-checkout').click()
-  await page.getByText('模拟支付', { exact: true }).click()
+  await pay(page)
   await expect(page.getByText('实付 ¥128', { exact: true })).toBeVisible()
   expect((await snapshot(request)).orders).toHaveLength(1)
 })
@@ -315,7 +317,7 @@ test('a merchant price change during payment confirmation requires a new confirm
 }) => {
   await putOneInCart(page)
   await page.getByTestId('cart-checkout').click()
-  await expect(page.locator('uni-modal')).toContainText('¥128')
+  await expect(page.getByTestId('checkout-page')).toContainText('¥128')
   await command(request, 'merchant', {
     type: 'editProduct',
     id: 'star-fairy',
@@ -323,12 +325,11 @@ test('a merchant price change during payment confirmation requires a new confirm
     price: '139',
     stock: '36',
   })
-  await expect(page.getByTestId('cart-total')).toHaveText('¥139')
-  await page.getByText('模拟支付', { exact: true }).click()
-  await expect(page.getByText('商品价格已变化，请刷新后重新确认', { exact: true })).toBeVisible()
+  await expect(page.getByTestId('checkout-error')).toContainText('商品价格已变化')
+  await expect(page.getByTestId('confirm-payment')).toHaveAttribute('disabled', 'true')
   expect((await snapshot(request)).orders).toHaveLength(0)
-  await page.getByTestId('cart-checkout').click()
-  await expect(page.locator('uni-modal')).toContainText('¥139')
-  await page.getByText('模拟支付', { exact: true }).click()
+  await page.getByTestId('checkout-refresh').click()
+  await expect(page.getByTestId('checkout-total')).toHaveText('¥139')
+  await pay(page)
   await expect(page.getByText('实付 ¥139', { exact: true })).toBeVisible()
 })
