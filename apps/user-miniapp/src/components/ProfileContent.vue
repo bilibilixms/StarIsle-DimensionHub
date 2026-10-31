@@ -53,8 +53,11 @@ function receive(order: DemoOrder) {
     },
   })
 }
-function open(id: string) {
+function openProduct(id: string) {
   uni.navigateTo({ url: `/pages/product/detail?id=${id}` })
+}
+function openOrder(id: string) {
+  uni.navigateTo({ url: `/pages/order/detail?id=${encodeURIComponent(id)}` })
 }
 function reset() {
   uni.showModal({
@@ -115,12 +118,17 @@ function reset() {
         :key="order.id"
         class="order-card"
         :data-testid="`user-order-${order.id}`"
+        role="button"
+        tabindex="0"
+        :aria-label="`查看${order.status}订单：${order.title}`"
+        @click="openOrder(order.id)"
+        @keydown.enter.self="openOrder(order.id)"
       >
         <view class="order-heading">
-          <text>{{ state.shop.name }}</text>
+          <text>{{ order.shopName || state.shop.name }}</text>
           <text class="order-status">{{ order.status }}</text>
         </view>
-        <view class="order-product" @click="open(order.productId)">
+        <view class="order-product">
           <image :src="order.cover" mode="aspectFill" />
           <view>
             <text class="order-title">{{ order.title }}</text>
@@ -139,7 +147,7 @@ function reset() {
           :disabled="!!busy"
           :loading="busy === order.id"
           :data-testid="`receive-${order.id}`"
-          @click="receive(order)"
+          @click.stop="receive(order)"
         >
           确认收货
         </button>
@@ -159,7 +167,7 @@ function reset() {
         v-for="product in state.products.filter((product) => state.favorites.includes(product.id))"
         :key="product.id"
         class="favorite-card"
-        @click="open(product.id)"
+        @click="openProduct(product.id)"
       >
         <image :src="product.cover" mode="aspectFill" />
         <view>

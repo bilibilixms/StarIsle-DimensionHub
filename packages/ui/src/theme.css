@@ -103,6 +103,23 @@ textarea:focus-visible {
 .muted {
   color: #a29aaa;
 }
+.stock-hint {
+  display: block;
+  margin-top: 7px;
+  color: #a08eaf;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.stock-hint.stock-low {
+  color: #b67539;
+  font-weight: 600;
+}
+.stock-hint.stock-empty {
+  color: #aaa1b2;
+}
+button[disabled] {
+  opacity: 0.45;
+}
 .form-label {
   display: block;
   margin: 18px 0 9px;

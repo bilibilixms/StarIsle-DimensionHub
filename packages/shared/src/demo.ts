@@ -3,6 +3,7 @@ import {
   DEMO_RECIPIENT,
   variantPrice,
   validateRecipient,
+  validateDemoStock,
   type DemoRole,
   type DemoVariant,
   type DemoProduct,
@@ -12,7 +13,14 @@ import {
   type DemoCommand,
   type DemoRecipient,
 } from './demo-domain'
-export { DEMO_ASSETS, DEMO_PRODUCTS, money, variantPrice } from './demo-domain'
+export {
+  DEMO_ASSETS,
+  DEMO_PRODUCTS,
+  money,
+  variantPrice,
+  stockMessage,
+  LOW_STOCK_LIMIT,
+} from './demo-domain'
 export type { DemoProduct, DemoOrder, DemoOrderStatus, DemoRecipient } from './demo-domain'
 
 export interface DemoCartItem {
@@ -90,8 +98,12 @@ function merge(marketplace: DemoMarketplace): DemoState {
     !data.marketplace ||
     data.marketplace.datasetId !== marketplace.datasetId ||
     data.marketplace.revision <= marketplace.revision
-  )
+  ) {
     data.marketplace = marketplace
+    const ids = new Set(marketplace.products.map((product) => product.id))
+    data.cart = data.cart.filter((item) => ids.has(item.productId))
+    data.favorites = data.favorites.filter((id) => ids.has(id))
+  }
   return save(data)
 }
 class DemoRequestError extends Error {
@@ -125,13 +137,15 @@ function request(
         } | null
         if (response.statusCode >= 200 && response.statusCode < 300 && body?.state?.version === 1)
           resolve(body as { state: DemoMarketplace; orderIds?: string[] })
-        else
+        else {
+          if (body?.state?.version === 1) merge(body.state)
           reject(
             new DemoRequestError(
               body?.message || '演示服务暂时不可用，请稍后重试',
               response.statusCode < 500,
             ),
           )
+        }
       },
       fail() {
         reject(new DemoRequestError('暂时无法连接演示服务，请检查服务后重试', false))
@@ -242,14 +256,15 @@ export function updateCart(
   return save(data)
 }
 function line(productId: string, variant: DemoVariant, quantity: number): DemoCheckoutLine {
-  const product = getDemoState().products.find(
-    (product) => product.id === productId && product.published,
-  )
+  const product = getDemoState().products.find((product) => product.id === productId)
   if (!product) throw new Error('商品已下架，请重新选择')
   return { productId, variant, quantity, expectedPrice: variantPrice(product, variant) }
 }
-function prepareCheckout(source: 'cart' | 'buy', items: DemoCheckoutLine[]): DemoCheckout {
-  const signature = (lines: DemoCheckoutLine[]) =>
+function pendingCheckout(
+  source: 'cart' | 'buy',
+  items: Pick<DemoCheckoutLine, 'productId' | 'variant' | 'quantity'>[],
+): DemoCheckout | undefined {
+  const signature = (lines: Pick<DemoCheckoutLine, 'productId' | 'variant' | 'quantity'>[]) =>
     JSON.stringify(
       lines.map(({ productId, variant, quantity }) => ({ productId, variant, quantity })),
     )
@@ -263,6 +278,32 @@ function prepareCheckout(source: 'cart' | 'buy', items: DemoCheckoutLine[]): Dem
     )
       return previous
   }
+}
+export function pendingBuyCheckout(productId: string): DemoCheckout | undefined {
+  return Object.keys(load().pending)
+    .map((key) => JSON.parse(key) as DemoCheckout)
+    .find(
+      (checkout) =>
+        checkout.type === 'checkout' &&
+        checkout.source === 'buy' &&
+        checkout.items[0]?.productId === productId,
+    )
+}
+export function cartCheckoutIssue(state: DemoState): string {
+  const chosen = state.cart.filter((item) => item.selected)
+  if (pendingCheckout('cart', chosen)) return ''
+  try {
+    validateDemoStock(state.products, chosen)
+    return ''
+  } catch (error) {
+    return error instanceof Error ? error.message : '请检查商品库存'
+  }
+}
+function prepareCheckout(source: 'cart' | 'buy', items: DemoCheckoutLine[]): DemoCheckout {
+  const pending = pendingCheckout(source, items)
+  if (pending) return pending
+  const data = load()
+  validateDemoStock(data.marketplace?.products || [], items)
   return {
     type: 'checkout',
     source,
@@ -312,9 +353,10 @@ export function editDemoProduct(
   id: string,
   title: string,
   price: string,
-  stock: string,
+  stock?: string,
+  expectedStock?: number,
 ): Promise<DemoState> {
-  return mutate({ type: 'editProduct', id, title, price, stock })
+  return mutate({ type: 'editProduct', id, title, price, stock, expectedStock })
 }
 export function toggleDemoProduct(id: string): Promise<DemoState> {
   return mutate({ type: 'toggleProduct', id })

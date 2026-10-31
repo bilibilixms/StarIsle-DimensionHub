@@ -51,6 +51,7 @@ test('one shared order flows from payment through shipment to receipt, retaining
   const order = paid.state.orders[0]
   assert.equal(order.amount, 31600)
   assert.equal(order.status, '待发货')
+  assert.equal(order.shopName, '星屿周边馆')
   assert.deepEqual(order.recipient, recipient)
   assert.equal(paid.state.products[0].stock, 34)
   assert.equal(paid.state.products[0].sold, 130)
@@ -62,10 +63,16 @@ test('one shared order flows from payment through shipment to receipt, retaining
     price: '139',
     stock: '34',
   })
+  await app.call('merchant', {
+    type: 'editShop',
+    name: '改名后的小店',
+    description: '新的店铺介绍',
+  })
   const merchant = await app.call('merchant')
   assert.equal(merchant.state.orders[0].id, order.id)
   assert.equal(merchant.state.orders[0].title, '星之花旅人 · 樱粉手办')
   assert.equal(merchant.state.orders[0].amount, 31600)
+  assert.equal(merchant.state.orders[0].shopName, '星屿周边馆')
   assert.equal(
     (await app.call('merchant', { type: 'ship', id: order.id, carrier: '顺丰速运', tracking: '' }))
       .status,
@@ -233,4 +240,115 @@ test('merchant publication, shared reset and revisions persist across restarts',
   const saved = await app.call('user')
   assert.equal(saved.state.orders.length, 0)
   assert.equal(saved.state.revision, reset.state.revision)
+})
+
+test('one remaining unit rejects two units of the same product, including mixed variants', async (t) => {
+  const app = await fixture(t)
+  await app.call('merchant', {
+    type: 'editProduct',
+    id: 'star-fairy',
+    title: '最后一件手办',
+    price: '128',
+    stock: '1',
+  })
+  for (const items of [
+    [{ productId: 'star-fairy', variant: 'standard', quantity: 2, expectedPrice: 12800 }],
+    [
+      { productId: 'star-fairy', variant: 'standard', quantity: 1, expectedPrice: 12800 },
+      { productId: 'star-fairy', variant: 'gift', quantity: 1, expectedPrice: 15800 },
+    ],
+  ]) {
+    const rejected = await app.call('user', checkout(items))
+    assert.equal(rejected.status, 409)
+    assert.match(rejected.message, /库存不足，仅剩 1 件/)
+    assert.equal(rejected.state.products[0].stock, 1)
+    assert.equal(rejected.state.orders.length, 0)
+  }
+  const paid = await app.call('user', checkout())
+  assert.equal(paid.status, 200)
+  assert.equal(paid.state.products[0].stock, 0)
+  assert.equal((await app.call('user', checkout())).status, 409)
+  const saved = await app.call('merchant')
+  assert.equal(saved.state.products[0].stock, 0)
+  assert.equal(saved.state.orders.length, 1)
+  assert.equal(saved.state.orders[0].quantity, 1)
+})
+
+test('editing price preserves sales stock and stale inventory edits cannot partially save', async (t) => {
+  const app = await fixture(t)
+  await app.call('merchant', {
+    type: 'editProduct',
+    id: 'star-fairy',
+    title: '限量手办',
+    price: '128',
+    stock: '2',
+  })
+  await app.call('user', checkout())
+  const edited = await app.call('merchant', {
+    type: 'editProduct',
+    id: 'star-fairy',
+    title: '改价手办',
+    price: '139',
+  })
+  assert.equal(edited.status, 200)
+  assert.equal(edited.state.products[0].stock, 1)
+  assert.equal(edited.state.products[0].sold, 129)
+  const conflict = await app.call('merchant', {
+    type: 'editProduct',
+    id: 'star-fairy',
+    title: '不应保存的名称',
+    price: '149',
+    stock: '5',
+    expectedStock: 2,
+  })
+  assert.equal(conflict.status, 409)
+  assert.match(conflict.message, /库存已变化/)
+  assert.equal(conflict.state.products[0].stock, 1)
+  assert.equal(conflict.state.products[0].price, 13900)
+  assert.equal(conflict.state.products[0].title, '改价手办')
+  const restocked = await app.call('merchant', {
+    type: 'editProduct',
+    id: 'star-fairy',
+    title: '改价手办',
+    price: '139',
+    stock: '5',
+    expectedStock: 1,
+  })
+  assert.equal(restocked.status, 200)
+  assert.equal(restocked.state.products[0].stock, 5)
+  assert.equal(restocked.state.orders.length, 1)
+  assert.equal(restocked.state.orders[0].amount, 12800)
+})
+
+test('stock remains validated when optional edits omit it or supply an invalid value', async (t) => {
+  const app = await fixture(t)
+  for (const stock of ['', '-1', '1.5', null, 2]) {
+    const invalid = await app.call('merchant', {
+      type: 'editProduct',
+      id: 'star-fairy',
+      title: '测试手办',
+      price: '128',
+      stock,
+    })
+    assert.equal(invalid.status, 400)
+  }
+  const invalidBaseline = await app.call('merchant', {
+    type: 'editProduct',
+    id: 'star-fairy',
+    title: '测试手办',
+    price: '128',
+    stock: '5',
+    expectedStock: '36',
+  })
+  assert.equal(invalidBaseline.status, 400)
+  const missingStock = await app.call('merchant', {
+    type: 'createProduct',
+    title: '新品',
+    price: '29',
+    cover: '/static/demo/star-fairy.jpg',
+  })
+  assert.equal(missingStock.status, 400)
+  const saved = await app.call('user')
+  assert.equal(saved.state.products[0].stock, 36)
+  assert.equal(saved.state.products.length, 4)
 })

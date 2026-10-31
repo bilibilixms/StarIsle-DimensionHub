@@ -11,6 +11,7 @@ import {
   DEMO_ASSETS,
   editDemoProduct,
   editDemoShop,
+  getDemoState,
   money,
   resetDemoState,
   shipDemoOrder,
@@ -36,6 +37,7 @@ const productId = ref('')
 const productTitle = ref('')
 const productPrice = ref('')
 const productStock = ref('')
+const originalStock = ref(0)
 const productCover = ref(DEMO_ASSETS.figurine)
 const shopName = ref('')
 const shopDescription = ref('')
@@ -109,6 +111,7 @@ function editProduct(product?: DemoProduct) {
   productTitle.value = product?.title || ''
   productPrice.value = product ? (product.price / 100).toFixed(2) : ''
   productStock.value = product ? String(product.stock) : ''
+  originalStock.value = product?.stock || 0
   productCover.value = product?.cover || DEMO_ASSETS.figurine
   error.value = ''
   sheet.value = 'product'
@@ -117,12 +120,14 @@ async function saveProduct() {
   if (busy.value) return
   busy.value = true
   try {
+    const stockChanged = productStock.value !== String(originalStock.value)
     state.value = productId.value
       ? await editDemoProduct(
           productId.value,
           productTitle.value,
           productPrice.value,
-          productStock.value,
+          stockChanged ? productStock.value : undefined,
+          stockChanged ? originalStock.value : undefined,
         )
       : await createDemoProduct(
           productTitle.value,
@@ -133,6 +138,7 @@ async function saveProduct() {
     sheet.value = ''
     uni.showToast({ title: productId.value ? '好物已更新' : '新品已上架', icon: 'success' })
   } catch (cause) {
+    state.value = getDemoState()
     error.value = cause instanceof Error ? cause.message : '保存失败'
   } finally {
     busy.value = false

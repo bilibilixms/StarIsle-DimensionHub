@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import SyncStatus from '@starisle/ui/SyncStatus.vue'
 import { useDemoSync } from '@starisle/ui/useDemoSync'
@@ -9,6 +9,10 @@ import {
   addToCart,
   buyDemoProduct,
   prepareBuyCheckout,
+  pendingBuyCheckout,
+  getDemoState,
+  stockMessage,
+  LOW_STOCK_LIMIT,
   DEMO_ASSETS,
   money,
   toggleFavorite,
@@ -26,6 +30,32 @@ const following = ref(false)
 const product = computed(() =>
   state.value.products.find((product) => product.id === id.value && product.published),
 )
+const pendingPurchase = computed(() => {
+  void state.value
+  return pendingBuyCheckout(id.value)
+})
+const cartQuantity = computed(() =>
+  state.value.cart
+    .filter((item) => item.productId === id.value)
+    .reduce((sum, item) => sum + item.quantity, 0),
+)
+const maxQuantity = computed(() => {
+  if (sheet.value === 'buy' && pendingPurchase.value)
+    return pendingPurchase.value.items[0]!.quantity
+  return Math.max(0, (product.value?.stock || 0) - (sheet.value === 'add' ? cartQuantity.value : 0))
+})
+const stockNotice = ref('')
+watch(maxQuantity, (maximum, previous) => {
+  if (quantity.value > maximum) {
+    quantity.value = maximum
+    if (sheet.value && maximum < previous)
+      stockNotice.value = maximum
+        ? `库存已更新，最多可选 ${maximum} 件`
+        : product.value?.stock === 0
+          ? '商品已售罄'
+          : '购物车中的数量已达到库存上限'
+  } else if (quantity.value < 1 && maximum > 0) quantity.value = 1
+})
 const price = computed(() => (product.value ? variantPrice(product.value, variant.value) : 0))
 const favorite = computed(() => state.value.favorites.includes(id.value))
 const cartCount = computed(() => state.value.cart.reduce((sum, item) => sum + item.quantity, 0))
@@ -50,21 +80,31 @@ function goCart() {
 }
 function choose(mode: 'add' | 'buy') {
   error.value = ''
+  stockNotice.value = ''
   sheet.value = mode
+  if (mode === 'buy' && pendingPurchase.value) {
+    variant.value = pendingPurchase.value.items[0]!.variant
+    quantity.value = pendingPurchase.value.items[0]!.quantity
+  }
 }
 function changeQuantity(delta: number) {
-  quantity.value = Math.max(1, Math.min(product.value?.stock || 1, quantity.value + delta))
+  if (!maxQuantity.value || busy.value || (sheet.value === 'buy' && pendingPurchase.value)) return
+  quantity.value = Math.max(1, Math.min(maxQuantity.value, quantity.value + delta))
 }
-function confirm() {
+async function confirm() {
   if (busy.value) return
-  if (!product.value) return
+  if (!product.value && !pendingPurchase.value) return
+  busy.value = true
   try {
+    await sync()
+    if (!connected.value) throw new Error('暂时无法连接演示服务，请检查服务后重试')
     if (sheet.value === 'add') {
       state.value = addToCart(id.value, variant.value, quantity.value)
       sheet.value = ''
       uni.showToast({ title: '心动已放进口袋', icon: 'success' })
     } else {
-      const checkoutDraft = prepareBuyCheckout(id.value, variant.value, quantity.value)
+      const checkoutDraft =
+        pendingPurchase.value || prepareBuyCheckout(id.value, variant.value, quantity.value)
       uni.showModal({
         title: '确认模拟支付',
         content: `合计 ¥${money(checkoutDraft.items[0]!.expectedPrice * checkoutDraft.items[0]!.quantity)}。收货：${checkoutDraft.recipient.name}，${checkoutDraft.recipient.address}。这是一笔联动演示订单，不会产生真实扣款。`,
@@ -79,6 +119,7 @@ function confirm() {
             sheet.value = ''
             uni.reLaunch({ url: '/pages/index/index?tab=profile' })
           } catch (cause) {
+            state.value = getDemoState()
             error.value = cause instanceof Error ? cause.message : '请稍后重试'
           } finally {
             busy.value = false
@@ -87,8 +128,15 @@ function confirm() {
       })
     }
   } catch (cause) {
+    state.value = getDemoState()
     error.value = cause instanceof Error ? cause.message : '请稍后重试'
+  } finally {
+    busy.value = false
   }
+}
+function recoverPayment() {
+  choose('buy')
+  void confirm()
 }
 function share() {
   uni.setClipboardData({
@@ -137,6 +185,16 @@ function share() {
           </view>
           <text class="detail-title" data-testid="detail-title">{{ product.title }}</text>
           <text class="detail-subtitle">{{ product.subtitle }}</text>
+          <text
+            class="stock-hint"
+            :class="{
+              'stock-low': product.stock <= LOW_STOCK_LIMIT && product.stock > 0,
+              'stock-empty': product.stock === 0,
+            }"
+            data-testid="detail-stock"
+          >
+            {{ stockMessage(product.stock) }}
+          </text>
           <view class="product-tags">
             <text>原创设计</text>
             <text>现货好物</text>
@@ -223,10 +281,28 @@ function share() {
           <text>购物车</text>
         </button>
         <view class="purchase-actions">
-          <button class="add-button" data-testid="add-to-cart" @click="choose('add')">
-            加入购物车
+          <button
+            class="add-button"
+            :disabled="busy || product.stock <= 0 || cartQuantity >= product.stock"
+            data-testid="add-to-cart"
+            @click="choose('add')"
+          >
+            {{
+              product.stock <= 0
+                ? '已售罄'
+                : cartQuantity >= product.stock
+                  ? '已达库存上限'
+                  : '加入购物车'
+            }}
           </button>
-          <button class="buy-button" data-testid="buy-now" @click="choose('buy')">立即购买</button>
+          <button
+            class="buy-button"
+            :disabled="busy || (product.stock <= 0 && !pendingPurchase)"
+            data-testid="buy-now"
+            @click="choose('buy')"
+          >
+            {{ pendingPurchase ? '确认支付结果' : product.stock <= 0 ? '已售罄' : '立即购买' }}
+          </button>
         </view>
       </view>
       <Sheet
@@ -239,13 +315,23 @@ function share() {
           <view>
             <text class="sku-title">{{ product.title }}</text>
             <text class="sku-price" data-testid="sku-price">¥{{ money(price) }}</text>
-            <text class="sku-stock">可选库存 {{ product.stock }} 件</text>
+            <text
+              class="sku-stock stock-hint"
+              :class="{
+                'stock-low': product.stock <= LOW_STOCK_LIMIT && product.stock > 0,
+                'stock-empty': product.stock === 0,
+              }"
+              data-testid="sku-stock"
+            >
+              {{ stockMessage(product.stock) }}
+            </text>
           </view>
         </view>
         <text class="sku-label">包装款式</text>
         <view class="sku-variants">
           <button
             :class="{ chosen: variant === 'standard' }"
+            :disabled="busy || (sheet === 'buy' && !!pendingPurchase)"
             data-testid="variant-standard"
             @click="variant = 'standard'"
           >
@@ -253,6 +339,7 @@ function share() {
           </button>
           <button
             :class="{ chosen: variant === 'gift' }"
+            :disabled="busy || (sheet === 'buy' && !!pendingPurchase)"
             data-testid="variant-gift"
             @click="variant = 'gift'"
           >
@@ -263,13 +350,30 @@ function share() {
         <view class="quantity-row">
           <text class="sku-label">数量</text>
           <view class="quantity-picker">
-            <button aria-label="减少数量" @click="changeQuantity(-1)">−</button>
+            <button
+              aria-label="减少数量"
+              :disabled="busy || quantity <= 1 || (sheet === 'buy' && !!pendingPurchase)"
+              @click="changeQuantity(-1)"
+            >
+              −
+            </button>
             <text data-testid="sku-quantity">{{ quantity }}</text>
-            <button aria-label="增加数量" data-testid="quantity-plus" @click="changeQuantity(1)">
+            <button
+              aria-label="增加数量"
+              :disabled="busy || quantity >= maxQuantity || (sheet === 'buy' && !!pendingPurchase)"
+              data-testid="quantity-plus"
+              @click="changeQuantity(1)"
+            >
               +
             </button>
           </view>
         </view>
+        <text v-if="stockNotice" class="stock-hint stock-low" data-testid="stock-update">
+          {{ stockNotice }}
+        </text>
+        <text v-if="sheet === 'buy' && pendingPurchase" class="form-note">
+          上次支付结果待确认，重试不会重复下单。
+        </text>
         <view v-if="sheet === 'buy'" class="demo-address">
           <Icon name="pin" tone="purple" :size="17" />
           <view>
@@ -287,15 +391,21 @@ function share() {
         </text>
         <button
           class="primary-button"
-          :disabled="busy"
+          :disabled="busy || maxQuantity <= 0"
           :loading="busy"
           data-testid="confirm-sku"
           @click="confirm"
         >
           {{
-            sheet === 'buy'
-              ? `模拟下单 · ¥${money(price * quantity)}`
-              : `确定加入 · ¥${money(price * quantity)}`
+            pendingPurchase && sheet === 'buy'
+              ? '确认上次支付结果'
+              : maxQuantity <= 0
+                ? product.stock <= 0
+                  ? '已售罄'
+                  : '已达库存上限'
+                : sheet === 'buy'
+                  ? `模拟下单 · ¥${money(price * quantity)}`
+                  : `确定加入 · ¥${money(price * quantity)}`
           }}
         </button>
       </Sheet>
@@ -318,6 +428,20 @@ function share() {
       <Icon name="bag" tone="purple" :size="44" />
       <text class="empty-title">这份好物暂时不在岛上</text>
       <text class="empty-copy">可能已下架，回首页发现新的心动吧。</text>
+      <template v-if="pendingPurchase">
+        <text class="form-note">上次支付结果待确认，确认不会重复下单。</text>
+        <button
+          class="primary-button"
+          :disabled="busy"
+          :loading="busy"
+          data-testid="buy-now"
+          @click="recoverPayment"
+        >
+          确认支付结果
+        </button>
+      </template>
+      <text v-if="error" class="form-error">{{ error }}</text>
+      <button class="secondary-button" aria-label="返回" @click="back">返回上一页</button>
       <button class="primary-button" @click="platform.reLaunch({ url: '/pages/index/index' })">
         返回首页
       </button>
@@ -677,7 +801,6 @@ function share() {
 }
 .sku-stock {
   display: block;
-  color: #baa9c4;
   font-size: 10px;
   margin-top: 6px;
 }

@@ -37,6 +37,10 @@ test('shopping preserves local favorites and shares paid orders with the demo se
   await page.reload()
   await page.getByTestId('nav-profile').click()
   await expect(page.getByTestId('favorite-count')).toHaveText('1')
+  await page.getByTestId('show-favorites').click()
+  await page.getByText('星之花旅人 · 樱粉手办', { exact: true }).click()
+  await expect(page).toHaveURL(/pages\/product\/detail\?id=star-fairy/)
+  await page.getByLabel('返回', { exact: true }).click()
   await page.getByTestId('nav-home').click()
   await page.getByTestId('product-star-fairy').click()
   await expect(page.getByTestId('detail-title')).toHaveText('星之花旅人 · 樱粉手办')
@@ -292,7 +296,6 @@ test('offline payment fails visibly and reconnecting restores the shared flow', 
   await page.route('**/api/demo/**', (route) => route.abort('failed'))
   await expect(page.getByTestId('sync-status')).toContainText('联动暂未连接')
   await page.getByTestId('cart-checkout').click()
-  await page.getByText('模拟支付', { exact: true }).click()
   await expect(
     page.getByText('暂时无法连接演示服务，请检查服务后重试', { exact: true }),
   ).toBeVisible()

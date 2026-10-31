@@ -7,12 +7,22 @@ import {
   money,
   updateCart,
   variantPrice,
+  syncDemoState,
+  cartCheckoutIssue,
+  stockMessage,
+  LOW_STOCK_LIMIT,
   type DemoState,
   type DemoCartItem,
 } from '@starisle/shared/demo'
 const props = defineProps<{ state: DemoState }>()
 const emit = defineEmits<{ refresh: []; completed: []; browse: [] }>()
 const busy = ref(false)
+const checkoutIssue = computed(() => cartCheckoutIssue(props.state))
+function cartQuantity(productId: string) {
+  return props.state.cart
+    .filter((item) => item.productId === productId)
+    .reduce((sum, item) => sum + item.quantity, 0)
+}
 const items = computed(() =>
   props.state.cart
     .map((item) => ({
@@ -37,13 +47,18 @@ function change(item: DemoCartItem, action: 'plus' | 'minus' | 'select' | 'remov
     uni.showToast({ title: error instanceof Error ? error.message : '修改失败', icon: 'none' })
   }
 }
-function checkout() {
+async function checkout() {
   if (busy.value) return
   if (!selectedCount.value) return uni.showToast({ title: '请先选择商品', icon: 'none' })
+  busy.value = true
   let prepared
   try {
+    await syncDemoState()
+    emit('refresh')
     prepared = prepareCartCheckout()
   } catch (error) {
+    emit('refresh')
+    busy.value = false
     return uni.showToast({
       title: error instanceof Error ? error.message : '请刷新商品后重试',
       icon: 'none',
@@ -65,12 +80,14 @@ function checkout() {
         emit('completed')
         uni.showToast({ title: '模拟支付成功', icon: 'success' })
       } catch (error) {
+        emit('refresh')
         uni.showToast({ title: error instanceof Error ? error.message : '下单失败', icon: 'none' })
       } finally {
         busy.value = false
       }
     },
   })
+  busy.value = false
 }
 </script>
 
@@ -104,12 +121,49 @@ function checkout() {
         <view class="cart-copy">
           <text class="cart-title">{{ item.product.title }}</text>
           <text class="cart-variant">{{ item.variant === 'gift' ? '礼盒版' : '标准版' }}</text>
+          <text
+            v-if="
+              !item.product.published ||
+              item.product.stock <= LOW_STOCK_LIMIT ||
+              cartQuantity(item.productId) > item.product.stock
+            "
+            class="stock-hint"
+            :class="{
+              'stock-low': item.product.stock > 0,
+              'stock-empty': item.product.stock === 0,
+            }"
+            data-testid="cart-stock"
+          >
+            {{
+              !item.product.published
+                ? '商品已下架'
+                : cartQuantity(item.productId) > item.product.stock && item.product.stock > 0
+                  ? `库存不足，仅剩 ${item.product.stock} 件，请调整数量`
+                  : stockMessage(item.product.stock)
+            }}
+          </text>
           <view class="cart-bottom">
             <text class="cart-price">¥{{ money(variantPrice(item.product, item.variant)) }}</text>
             <view class="quantity-control">
-              <button aria-label="减少数量" @click="change(item, 'minus')">−</button>
+              <button
+                aria-label="减少数量"
+                :disabled="busy || item.quantity <= 1"
+                @click="change(item, 'minus')"
+              >
+                −
+              </button>
               <text>{{ item.quantity }}</text>
-              <button aria-label="增加数量" @click="change(item, 'plus')">+</button>
+              <button
+                aria-label="增加数量"
+                :disabled="
+                  busy ||
+                  !item.product.published ||
+                  cartQuantity(item.productId) >= item.product.stock
+                "
+                @click="change(item, 'plus')"
+              >
+                +
+              </button>
             </view>
           </view>
           <button class="remove-item" aria-label="移除商品" @click="change(item, 'remove')">
@@ -117,6 +171,9 @@ function checkout() {
           </button>
         </view>
       </view>
+      <text v-if="checkoutIssue" class="form-error" data-testid="cart-stock-error">
+        {{ checkoutIssue }}
+      </text>
       <view class="cart-summary">
         <view>
           <text class="summary-note">合计（免运费）</text>
@@ -124,7 +181,7 @@ function checkout() {
         </view>
         <button
           class="primary-button checkout"
-          :disabled="busy"
+          :disabled="busy || !!checkoutIssue || !selectedCount"
           :loading="busy"
           data-testid="cart-checkout"
           @click="checkout"

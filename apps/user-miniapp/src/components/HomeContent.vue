@@ -2,7 +2,14 @@
 import { computed, ref, watch } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
-import { DEMO_ASSETS, money, toggleFavorite, type DemoState } from '@starisle/shared/demo'
+import {
+  DEMO_ASSETS,
+  money,
+  toggleFavorite,
+  stockMessage,
+  LOW_STOCK_LIMIT,
+  type DemoState,
+} from '@starisle/shared/demo'
 
 const props = defineProps<{ state: DemoState; discover: boolean }>()
 const emit = defineEmits<{ refresh: [] }>()
@@ -133,6 +140,14 @@ function favorite(id: string) {
           <view class="product-copy">
             <text class="product-name" @click="open(product.id)">{{ product.title }}</text>
             <text class="product-subtitle">{{ product.subtitle }}</text>
+            <text
+              v-if="product.stock <= LOW_STOCK_LIMIT"
+              class="stock-hint"
+              :class="{ 'stock-low': product.stock > 0, 'stock-empty': product.stock === 0 }"
+              :data-testid="`stock-${product.id}`"
+            >
+              {{ stockMessage(product.stock) }}
+            </text>
             <view class="product-meta">
               <text class="product-price">
                 <text class="currency">¥</text>

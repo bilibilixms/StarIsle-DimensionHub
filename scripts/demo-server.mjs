@@ -134,6 +134,7 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
       send(error instanceof DemoDomainError ? error.status : 500, {
         message:
           error instanceof DemoDomainError ? error.message : '演示数据暂时无法保存，请稍后重试',
+        ...(error instanceof DemoDomainError ? { state: snapshot(role) } : {}),
       })
     }
   })

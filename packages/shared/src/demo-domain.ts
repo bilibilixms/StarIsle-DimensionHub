@@ -20,6 +20,7 @@ export interface DemoRecipient {
 export type DemoOrderStatus = '待发货' | '待收货' | '已完成'
 export interface DemoOrder {
   id: string
+  shopName?: string
   productId: string
   title: string
   cover: string
@@ -89,6 +90,28 @@ export function money(cents: number): string {
 export function variantPrice(product: DemoProduct, variant: DemoVariant): number {
   return product.price + (variant === 'gift' ? 3000 : 0)
 }
+export const LOW_STOCK_LIMIT = 5
+export function stockMessage(stock: number): string {
+  if (stock <= 0) return '已售罄'
+  return stock <= LOW_STOCK_LIMIT ? `库存紧张，仅剩 ${stock} 件` : `库存 ${stock} 件`
+}
+export function validateDemoStock(
+  products: DemoProduct[],
+  items: Pick<DemoCheckoutLine, 'productId' | 'quantity'>[],
+): void {
+  const totals = new Map<string, number>()
+  for (const item of items) {
+    if (!Number.isSafeInteger(item.quantity) || item.quantity < 1)
+      throw new DemoDomainError('请选择有效的商品数量')
+    totals.set(item.productId, (totals.get(item.productId) || 0) + item.quantity)
+  }
+  for (const [id, quantity] of totals) {
+    const product = products.find((product) => product.id === id && product.published)
+    if (!product) throw new DemoDomainError('商品已下架，请重新选择', 409)
+    if (quantity > product.stock)
+      throw new DemoDomainError(`「${product.title}」库存不足，仅剩 ${product.stock} 件`, 409)
+  }
+}
 
 // The service is the only writer. Clients receive projections of this one order list.
 export function applyDemoCommand(
@@ -115,7 +138,6 @@ export function applyDemoCommand(
     const recipient = validateRecipient(command.recipient)
     if (!Array.isArray(command.items) || !command.items.length || command.items.length > 100)
       throw new DemoDomainError('请先选择商品')
-    const totals = new Map<string, number>()
     const lines = command.items.map((raw: unknown) => {
       if (!raw || typeof raw !== 'object') throw new DemoDomainError('商品信息无效')
       const item = raw as DemoCheckoutLine
@@ -131,19 +153,19 @@ export function applyDemoCommand(
       if (!product) throw new DemoDomainError('商品已下架，请刷新后重新选择', 409)
       if (item.expectedPrice !== variantPrice(product, item.variant))
         throw new DemoDomainError('商品价格已变化，请刷新后重新确认', 409)
-      totals.set(product.id, (totals.get(product.id) || 0) + item.quantity)
       return { item, product }
     })
-    for (const [id, quantity] of totals) {
-      if (quantity > state.products.find((product) => product.id === id)!.stock)
-        throw new DemoDomainError('商品库存不足，请刷新后重新选择', 409)
-    }
+    validateDemoStock(
+      state.products,
+      lines.map(({ item }) => item),
+    )
     for (const { item, product } of lines) {
       const id = `XY${makeId()}`
       product.stock -= item.quantity
       product.sold += item.quantity
       state.orders.unshift({
         id,
+        shopName: state.shop.name,
         productId: product.id,
         title: product.title,
         cover: product.cover,
@@ -180,22 +202,28 @@ export function applyDemoCommand(
     }
   } else if (command.type === 'createProduct' || command.type === 'editProduct') {
     const title = text(command.title, '商品名称（最多 60 字）', 60)
+    const updatesStock = command.type === 'createProduct' || command.stock !== undefined
     if (
       typeof command.price !== 'string' ||
       !/^\d{1,6}(\.\d{1,2})?$/.test(command.price) ||
       Number(command.price) <= 0 ||
-      typeof command.stock !== 'string' ||
-      !/^\d{1,6}$/.test(command.stock)
+      (updatesStock && (typeof command.stock !== 'string' || !/^\d{1,6}$/.test(command.stock)))
     )
       throw new DemoDomainError('请填写有效价格和整数库存')
     const fields = {
       title,
       price: Math.round(Number(command.price) * 100),
-      stock: Number(command.stock),
+      ...(updatesStock ? { stock: Number(command.stock) } : {}),
     }
     if (command.type === 'editProduct') {
       const product = state.products.find((product) => product.id === command.id)
       if (!product) throw new DemoDomainError('商品不存在', 404)
+      if (updatesStock && command.expectedStock !== undefined) {
+        if (!Number.isSafeInteger(command.expectedStock) || Number(command.expectedStock) < 0)
+          throw new DemoDomainError('请重新打开商品编辑后修改库存')
+        if (product.stock !== command.expectedStock)
+          throw new DemoDomainError('库存已变化，请重新打开商品编辑后确认库存', 409)
+      }
       Object.assign(product, fields)
     } else {
       if (command.cover !== DEMO_ASSETS.hero && command.cover !== DEMO_ASSETS.figurine)
@@ -203,6 +231,7 @@ export function applyDemoCommand(
       state.products.unshift({
         id: `product-${makeId()}`,
         ...fields,
+        stock: Number(command.stock),
         subtitle: '来自星屿小店的新心意',
         sold: 0,
         published: true,
