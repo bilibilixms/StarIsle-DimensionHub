@@ -25,7 +25,7 @@ export function isGuest(): boolean {
 }
 function safeDestination(url: string, role: AuthRole): string {
   if (role === 'merchant') return '/pages/merchant/index'
-  return /^\/pages\/(index\/index|product\/detail|order\/detail)(\?|$)/.test(url)
+  return /^\/pages\/(index\/index|product\/detail|order\/detail|shop\/detail)(\?|$)/.test(url)
     ? url
     : '/pages/index/index'
 }

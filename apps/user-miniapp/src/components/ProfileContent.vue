@@ -43,6 +43,11 @@ function saveAddress() {
     addressError.value = error instanceof Error ? error.message : '请检查收货信息'
   }
 }
+function syncRecipient(field: 'name' | 'phone' | 'address', event: unknown) {
+  // H5 input updates are throttled; blur carries the latest displayed value.
+  const value = (event as { detail?: { value?: unknown } })?.detail?.value
+  if (typeof value === 'string') recipient.value[field] = value
+}
 function receive(order: DemoOrder) {
   if (busy.value) return
   uni.showModal({
@@ -204,6 +209,7 @@ function reset() {
       <text class="form-label">收货人</text>
       <input
         v-model="recipient.name"
+        @blur="syncRecipient('name', $event)"
         class="form-input"
         aria-label="收货人"
         data-testid="recipient-name"
@@ -212,6 +218,7 @@ function reset() {
       <text class="form-label">手机号</text>
       <input
         v-model="recipient.phone"
+        @blur="syncRecipient('phone', $event)"
         class="form-input"
         aria-label="手机号"
         data-testid="recipient-phone"
@@ -221,6 +228,7 @@ function reset() {
       <text class="form-label">收货地址</text>
       <input
         v-model="recipient.address"
+        @blur="syncRecipient('address', $event)"
         class="form-input"
         aria-label="收货地址"
         data-testid="recipient-address"

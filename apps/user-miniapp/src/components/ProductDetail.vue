@@ -13,6 +13,7 @@ import {
   getDemoState,
   stockMessage,
   LOW_STOCK_LIMIT,
+  DEMO_SHOP_ID,
   DEMO_ASSETS,
   money,
   toggleFavorite,
@@ -25,9 +26,8 @@ const props = defineProps<{ id: string }>()
 const id = computed(() => props.id)
 const variant = ref<'standard' | 'gift'>('standard')
 const quantity = ref(1)
-const sheet = ref<'add' | 'buy' | 'shop' | ''>('')
+const sheet = ref<'add' | 'buy' | ''>('')
 const error = ref('')
-const following = ref(false)
 const product = computed(() =>
   state.value.products.find((product) => product.id === id.value && product.published),
 )
@@ -68,9 +68,10 @@ const cartCount = computed(() => state.value.cart.reduce((sum, item) => sum + it
 const platform = uni
 const statusHeight = uni.getSystemInfoSync().statusBarHeight || 0
 
-function goHome() {
-  sheet.value = ''
-  uni.reLaunch({ url: '/pages/index/index' })
+function openShop() {
+  uni.navigateTo({
+    url: `/pages/shop/detail?id=${encodeURIComponent(product.value?.shopId || DEMO_SHOP_ID)}`,
+  })
 }
 function back() {
   if (getCurrentPages().length > 1) uni.navigateBack()
@@ -245,7 +246,7 @@ function share() {
             </view>
             <text class="shop-description">{{ currentShop.description }}</text>
           </view>
-          <button class="visit-shop" @click="sheet = 'shop'">
+          <button class="visit-shop" data-testid="visit-shop" @click="openShop">
             进店逛逛
             <Icon name="chevron-right" tone="purple" :size="12" />
           </button>
@@ -414,19 +415,6 @@ function share() {
                   : `确定加入 · ¥${money(price * quantity)}`
           }}
         </button>
-      </Sheet>
-      <Sheet :visible="sheet === 'shop'" :title="currentShop.name" @close="sheet = ''">
-        <view class="shop-preview">
-          <image :src="DEMO_ASSETS.figurine" mode="aspectFill" />
-          <text>{{ currentShop.description }}</text>
-          <text class="shop-preview-copy">
-            {{ '原创周边与温柔小物，\n期待在这里遇到同样热爱的你。' }}
-          </text>
-        </view>
-        <button class="primary-button" @click="following = !following">
-          {{ following ? '已关注小店' : '关注这家小店' }}
-        </button>
-        <button class="shop-back" @click="goHome">回到岛上，逛逛更多好物</button>
       </Sheet>
     </template>
     <view v-else-if="!syncing" class="empty-state missing-product">
@@ -880,34 +868,6 @@ function share() {
   font-size: 11px;
   color: #8f77a2;
   line-height: 1.9;
-}
-.shop-preview {
-  text-align: center;
-}
-.shop-preview image {
-  height: 88px;
-  width: 88px;
-  border-radius: 20px;
-  display: block;
-  margin: 0 auto 20px;
-}
-.shop-preview > text {
-  font-size: 14px;
-  display: block;
-}
-.shop-preview-copy {
-  color: #b19bbf;
-  font-size: 12px !important;
-  line-height: 1.9;
-  white-space: pre-line;
-  margin: 15px 0 24px;
-}
-.shop-back {
-  margin: 15px 0 0;
-  padding: 0;
-  background: transparent;
-  color: #aa8dbf;
-  font-size: 11px;
 }
 .missing-product {
   padding-top: 160px;

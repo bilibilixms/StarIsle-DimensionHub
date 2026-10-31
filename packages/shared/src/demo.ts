@@ -21,6 +21,8 @@ export {
   variantPrice,
   stockMessage,
   LOW_STOCK_LIMIT,
+  productShopId,
+  DEMO_SHOP_ID,
 } from './demo-domain'
 export type { DemoProduct, DemoOrder, DemoOrderStatus, DemoRecipient } from './demo-domain'
 

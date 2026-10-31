@@ -2,19 +2,25 @@
 import { computed, ref, watch } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
-import {
-  DEMO_ASSETS,
-  money,
-  toggleFavorite,
-  stockMessage,
-  LOW_STOCK_LIMIT,
-  type DemoState,
-} from '@starisle/shared/demo'
+import ProductGrid from './ProductGrid.vue'
+import { DEMO_ASSETS, productShopId, type DemoState } from '@starisle/shared/demo'
 
 const props = defineProps<{ state: DemoState; discover: boolean }>()
 const emit = defineEmits<{ refresh: [] }>()
 const category = ref('推荐')
 const keyword = ref('')
+const query = computed(() => keyword.value.trim().toLowerCase())
+const shops = computed(() =>
+  query.value
+    ? props.state.shops.filter((shop) => shop.name.toLowerCase().includes(query.value))
+    : [],
+)
+const matchingShopIds = computed(() => new Set(shops.value.map((shop) => shop.id)))
+function shopProducts(id: string) {
+  return props.state.products.filter(
+    (product) => product.published && productShopId(product) === id,
+  )
+}
 const info = ref<'artist' | 'event' | ''>('')
 const followed = ref(false)
 const categories = [
@@ -34,18 +40,17 @@ const products = computed(() =>
   props.state.products.filter(
     (product) =>
       product.published &&
-      (category.value === '推荐' ||
+      (query.value ||
+        category.value === '推荐' ||
         category.value === '漫展' ||
         product.category === category.value) &&
-      product.title.includes(keyword.value.trim()),
+      (!query.value ||
+        product.title.toLowerCase().includes(query.value) ||
+        matchingShopIds.value.has(productShopId(product))),
   ),
 )
-function open(id: string) {
-  uni.navigateTo({ url: `/pages/product/detail?id=${id}` })
-}
-function favorite(id: string) {
-  toggleFavorite(id)
-  emit('refresh')
+function openShop(id: string) {
+  uni.navigateTo({ url: `/pages/shop/detail?id=${encodeURIComponent(id)}` })
 }
 </script>
 
@@ -55,10 +60,10 @@ function favorite(id: string) {
       <Icon name="search" :size="17" />
       <input
         v-model="keyword"
-        placeholder="搜周边、画师，或下一份心动"
+        placeholder="搜索商品或商家"
         confirm-type="search"
         maxlength="60"
-        aria-label="搜索商品"
+        aria-label="搜索商品或商家"
         data-testid="product-search"
       />
       <button v-if="keyword" class="clear-search" aria-label="清空搜索" @click="keyword = ''">
@@ -66,7 +71,36 @@ function favorite(id: string) {
       </button>
       <text v-else class="search-note">发现热爱</text>
     </view>
-    <view v-if="!discover && !keyword" class="hero" data-testid="home-hero">
+    <view v-if="shops.length" class="shop-results" data-testid="shop-results">
+      <view class="section-heading">
+        <view class="section-heading-title">
+          <Icon name="bag" tone="purple" :size="19" />
+          <text>相关店铺</text>
+        </view>
+        <text class="recommendation-note">{{ shops.length }} 家店铺</text>
+      </view>
+      <button
+        v-for="shop in shops"
+        :key="shop.id"
+        class="search-shop"
+        :data-testid="`shop-${shop.id}`"
+        :aria-label="`进入店铺：${shop.name}`"
+        @click="openShop(shop.id)"
+      >
+        <image
+          :src="shopProducts(shop.id)[0]?.cover || DEMO_ASSETS.figurine"
+          mode="aspectFill"
+          class="search-shop-avatar"
+        />
+        <view class="search-shop-copy">
+          <text class="search-shop-name">{{ shop.name }}</text>
+          <text class="search-shop-description">{{ shop.description }}</text>
+          <text class="search-shop-count">{{ shopProducts(shop.id).length }} 款上架商品</text>
+        </view>
+        <Icon name="chevron-right" tone="purple" :size="17" />
+      </button>
+    </view>
+    <view v-if="!discover && !query" class="hero" data-testid="home-hero">
       <image class="hero-art" :src="DEMO_ASSETS.hero" mode="aspectFill" />
       <view class="hero-shade" />
       <view class="hero-content">
@@ -85,7 +119,7 @@ function favorite(id: string) {
       </view>
       <text class="hero-corner">原创好物 · 灵感相遇</text>
     </view>
-    <view v-if="!keyword" class="category-grid">
+    <view v-if="!query" class="category-grid">
       <button
         v-for="item in categories"
         :key="item.key"
@@ -98,7 +132,7 @@ function favorite(id: string) {
         <text>{{ item.label }}</text>
       </button>
     </view>
-    <view class="discovery-tabs">
+    <view v-if="!query" class="discovery-tabs">
       <button
         v-for="item in ['推荐', '周边', '画作', '漫展']"
         :key="item"
@@ -111,70 +145,29 @@ function favorite(id: string) {
       </button>
       <text class="discovery-tip">找到你的同频</text>
     </view>
-    <view v-if="category !== '漫展'" class="recommendation">
+    <view v-if="query || category !== '漫展'" class="recommendation">
       <view class="section-heading">
         <view class="section-heading-title">
           <view class="section-spark">✦</view>
-          <text>{{ keyword ? '搜索结果' : category === '画作' ? '灵感收藏夹' : '为你心动' }}</text>
+          <text>{{ query ? '搜索结果' : category === '画作' ? '灵感收藏夹' : '为你心动' }}</text>
         </view>
         <text class="recommendation-note">
-          {{ keyword ? `${products.length} 件好物` : '让喜欢，有迹可循' }}
+          {{ query ? `${products.length} 件好物` : '让喜欢，有迹可循' }}
         </text>
       </view>
-      <view v-if="products.length" class="product-grid">
-        <view v-for="product in products" :key="product.id" class="product-card">
-          <view
-            class="product-cover-wrap"
-            :data-testid="`product-${product.id}`"
-            @click="open(product.id)"
-          >
-            <image
-              :src="product.cover"
-              class="product-cover"
-              :class="{ artwork: product.category === '画作' || product.id === 'island-card' }"
-              mode="aspectFill"
-              :aria-label="product.title"
-            />
-            <text class="product-cover-tag">{{ product.tag }}</text>
-          </view>
-          <view class="product-copy">
-            <text class="product-name" @click="open(product.id)">{{ product.title }}</text>
-            <text class="product-subtitle">{{ product.subtitle }}</text>
-            <text
-              v-if="product.stock <= LOW_STOCK_LIMIT"
-              class="stock-hint"
-              :class="{ 'stock-low': product.stock > 0, 'stock-empty': product.stock === 0 }"
-              :data-testid="`stock-${product.id}`"
-            >
-              {{ stockMessage(product.stock) }}
-            </text>
-            <view class="product-meta">
-              <text class="product-price">
-                <text class="currency">¥</text>
-                {{ money(product.price) }}
-              </text>
-              <button
-                class="favorite-button"
-                :aria-label="state.favorites.includes(product.id) ? '取消收藏' : '收藏商品'"
-                :data-testid="`favorite-${product.id}`"
-                @click="favorite(product.id)"
-              >
-                <Icon
-                  name="heart"
-                  :tone="state.favorites.includes(product.id) ? 'pink' : 'muted'"
-                  :size="18"
-                />
-              </button>
-            </view>
-          </view>
-        </view>
-      </view>
-      <view v-else class="empty-state">
+      <ProductGrid
+        v-if="products.length"
+        :products="products"
+        :favorites="state.favorites"
+        @refresh="$emit('refresh')"
+      />
+      <view v-else-if="!shops.length" class="empty-state">
         <Icon name="search" tone="purple" :size="36" />
         <text class="empty-title">这一份心动还没出现</text>
         <text class="empty-copy">换个关键词，再找找看。</text>
         <button class="secondary-button" @click="keyword = ''">清空关键词</button>
       </view>
+      <text v-else class="shop-search-note">没有匹配的上架商品，可以进入店铺逛逛。</text>
     </view>
     <view v-else class="events-section">
       <view class="section-heading">
@@ -198,7 +191,7 @@ function favorite(id: string) {
         </view>
       </view>
     </view>
-    <view v-if="!keyword" class="artist-strip" @click="info = 'artist'">
+    <view v-if="!query" class="artist-strip" @click="info = 'artist'">
       <image :src="DEMO_ASSETS.hero" class="artist-avatar" mode="aspectFill" />
       <view class="artist-strip-copy">
         <text>和创作者一起，把梦画下来</text>
@@ -241,6 +234,61 @@ function favorite(id: string) {
 <style scoped>
 .home-content {
   padding: 0 20px;
+}
+.shop-results {
+  margin-bottom: 25px;
+}
+.search-shop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px;
+  margin: 0 0 10px;
+  text-align: left;
+  background: #fff;
+  border: 1px solid #ece5f3;
+  border-radius: 14px;
+  line-height: 1.5;
+}
+.search-shop-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+.search-shop-copy {
+  flex: 1;
+  min-width: 0;
+}
+.search-shop-name {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #544064;
+  word-break: break-all;
+}
+.search-shop-description {
+  display: block;
+  font-size: 11px;
+  color: #9989a8;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-shop-count {
+  display: block;
+  font-size: 10px;
+  color: #b09bc4;
+  margin-top: 5px;
+}
+.shop-search-note {
+  display: block;
+  padding: 20px 0;
+  font-size: 12px;
+  color: #9989a8;
+  line-height: 1.8;
 }
 .search-box {
   height: 41px;
@@ -437,91 +485,6 @@ function favorite(id: string) {
 .recommendation-note {
   font-size: 10px;
   color: #92839f;
-}
-.product-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 12px;
-}
-.product-card {
-  background: #fff;
-  border: 1px solid #f0ecf4;
-  border-radius: 14px;
-  overflow: hidden;
-}
-.product-cover-wrap {
-  position: relative;
-  padding-top: 106%;
-  overflow: hidden;
-  background: #ede1f1;
-}
-.product-cover {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-.product-cover.artwork {
-  object-position: 80% center;
-}
-.product-cover-tag {
-  position: absolute;
-  left: 8px;
-  bottom: 8px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.9);
-  color: #9364ac;
-  font-size: 8px;
-  padding: 3px 6px;
-}
-.product-copy {
-  padding: 11px 10px 8px;
-}
-.product-name {
-  display: block;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.6;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.product-subtitle {
-  display: block;
-  font-size: 9px;
-  line-height: 1.5;
-  margin-top: 5px;
-  color: #94879e;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.product-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 8px;
-}
-.product-price {
-  color: #e67b98;
-  font-size: 17px;
-  font-weight: 700;
-}
-.currency {
-  font-size: 10px;
-  margin-right: 2px;
-}
-.favorite-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px;
-  margin: 0 -4px 0 0;
-  border-radius: 50%;
-  background: transparent;
-  line-height: 1;
 }
 .artist-strip {
   display: flex;
