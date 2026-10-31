@@ -1,4 +1,5 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { test, expect } from './fixtures'
+import type { APIRequestContext, Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 
 const user = 'http://127.0.0.1:4173/#/pages/index/index'

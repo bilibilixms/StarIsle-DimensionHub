@@ -100,7 +100,7 @@ async function checkout() {
     <template v-if="items.length">
       <view class="shop-heading">
         <Icon name="bag" tone="purple" :size="18" />
-        <text>{{ state.shop.name }}</text>
+        <text>我的心动好物</text>
         <Icon name="chevron-right" :size="13" />
       </view>
       <view
@@ -120,6 +120,12 @@ async function checkout() {
         <image :src="item.product.cover" mode="aspectFill" class="cart-cover" />
         <view class="cart-copy">
           <text class="cart-title">{{ item.product.title }}</text>
+          <text class="cart-variant">
+            {{
+              state.shops.find((shop) => shop.id === (item.product.shopId || 'demo-shop'))?.name ||
+              state.shop.name
+            }}
+          </text>
           <text class="cart-variant">{{ item.variant === 'gift' ? '礼盒版' : '标准版' }}</text>
           <text
             v-if="

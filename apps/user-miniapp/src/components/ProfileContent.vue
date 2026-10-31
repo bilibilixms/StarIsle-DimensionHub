@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
+import { getDemoSession, logoutDemo, openLogin } from '@starisle/shared/auth'
 import {
   DEMO_ASSETS,
   money,
@@ -18,6 +19,16 @@ const busy = ref('')
 const addressSheet = ref(false)
 const recipient = ref({ ...props.state.recipient })
 const addressError = ref('')
+async function logout() {
+  try {
+    await logoutDemo()
+  } catch (error) {
+    uni.showToast({
+      title: error instanceof Error ? error.message : '退出失败，请重试',
+      icon: 'none',
+    })
+  }
+}
 function openAddress() {
   recipient.value = { ...props.state.recipient }
   addressError.value = ''
@@ -79,7 +90,7 @@ function reset() {
     <view class="profile-card">
       <image :src="DEMO_ASSETS.hero" class="avatar" mode="aspectFill" />
       <view>
-        <text class="profile-name">小星同学</text>
+        <text class="profile-name">{{ getDemoSession()?.account.nickname || '星屿同学' }}</text>
         <text class="profile-motto">今天也要，为热爱心动。</text>
         <text class="profile-badge">星屿体验官</text>
       </view>
@@ -183,6 +194,10 @@ function reset() {
       </view>
     </template>
     <button class="reset-button" @click="reset">清空本机收藏与购物车</button>
+    <button class="secondary-button" data-testid="switch-role" @click="openLogin('merchant')">
+      切换身份
+    </button>
+    <button class="reset-button" data-testid="logout" @click="logout">退出登录</button>
     <text class="profile-footnote">这是一座正在生长的小岛。感谢你来做客。</text>
     <Sheet :visible="addressSheet" title="演示收货地址" @close="addressSheet = false">
       <text class="form-note">用于本地联动演示，请填写虚构信息。</text>

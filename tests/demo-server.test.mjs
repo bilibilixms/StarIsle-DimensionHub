@@ -16,6 +16,15 @@ async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), 'starisle-demo-'))
   const dataFile = join(dir, 'marketplace.json')
   let app = await startDemoServer({ dataFile, port: 0 })
+  const tokens = {}
+  for (const role of ['user', 'merchant']) {
+    const response = await fetch(`${app.url}/api/demo/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role, phone: '13800000000', password: '123456' }),
+    })
+    tokens[role] = (await response.json()).session.token
+  }
   t.after(async () => {
     await app.close()
     await rm(dir, { recursive: true, force: true })
@@ -28,6 +37,7 @@ async function fixture(t) {
           'X-Demo-Role': role,
           'Content-Type': 'application/json',
           'X-Idempotency-Key': id,
+          Authorization: `Bearer ${tokens[role]}`,
           ...extraHeaders,
         },
         body: command ? JSON.stringify(command) : undefined,

@@ -22,7 +22,7 @@
     "test:e2e": "playwright test",
     "assets:demo": "node scripts/prepare-demo-assets.mjs",
     "dev:demo": "node --experimental-strip-types scripts/demo-server.mjs",
-    "test:demo": "node --experimental-strip-types --test tests/demo-server.test.mjs"
+    "test:demo": "node --experimental-strip-types --test tests/demo-*.test.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

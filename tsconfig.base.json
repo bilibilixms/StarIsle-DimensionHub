@@ -3,6 +3,13 @@
     "target": "ES2020",
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@starisle/user/*": ["apps/user-miniapp/src/components/*"],
+      "@starisle/ui/MerchantWorkspace.vue": [
+        "apps/merchant-miniapp/src/components/MerchantWorkspace.vue"
+      ]
+    },
     "strict": true,
     "jsx": "preserve",
     "resolveJsonModule": true,

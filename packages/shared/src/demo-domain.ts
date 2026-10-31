@@ -1,7 +1,9 @@
 export type DemoRole = 'user' | 'merchant'
+export const DEMO_MERCHANT_VERIFICATION_CODE = '1234'
 export type DemoVariant = 'standard' | 'gift'
 export interface DemoProduct {
   id: string
+  shopId?: string
   title: string
   subtitle: string
   price: number
@@ -20,6 +22,7 @@ export interface DemoRecipient {
 export type DemoOrderStatus = '待发货' | '待收货' | '已完成'
 export interface DemoOrder {
   id: string
+  shopId?: string
   shopName?: string
   productId: string
   title: string
@@ -44,6 +47,24 @@ export interface DemoMarketplace {
   products: DemoProduct[]
   orders: DemoOrder[]
   shop: { name: string; description: string }
+  shops?: DemoShop[]
+}
+export interface DemoShop {
+  id: string
+  name: string
+  description: string
+}
+export interface DemoActor {
+  id: string
+  nickname: string
+  shopId?: string
+}
+export const DEMO_SHOP_ID = 'demo-shop'
+export function productShopId(product: { shopId?: string }): string {
+  return product.shopId || DEMO_SHOP_ID
+}
+export function marketplaceShops(state: DemoMarketplace): DemoShop[] {
+  return state.shops || [{ id: DEMO_SHOP_ID, ...state.shop }]
 }
 export interface DemoCheckoutLine {
   productId: string
@@ -119,6 +140,7 @@ export function applyDemoCommand(
   role: DemoRole,
   command: DemoCommand,
   makeId: () => string,
+  actor: DemoActor = { id: DEMO_BUYER_ID, nickname: DEMO_RECIPIENT.name, shopId: DEMO_SHOP_ID },
 ): string[] {
   const userCommands = ['checkout', 'receive']
   const merchantCommands = [
@@ -132,6 +154,8 @@ export function applyDemoCommand(
   if (!(role === 'user' ? userCommands : merchantCommands).includes(command.type))
     throw new DemoDomainError('当前演示角色不能执行此操作', 403)
   const ids: string[] = []
+  const shopId = actor.shopId || DEMO_SHOP_ID
+  const owns = (item: { shopId?: string }) => productShopId(item) === shopId
   if (command.type === 'checkout') {
     if (command.datasetId && command.datasetId !== state.datasetId)
       throw new DemoDomainError('演示场景已重置，请刷新后重新确认', 409)
@@ -165,7 +189,10 @@ export function applyDemoCommand(
       product.sold += item.quantity
       state.orders.unshift({
         id,
-        shopName: state.shop.name,
+        shopId: productShopId(product),
+        shopName:
+          marketplaceShops(state).find((shop) => shop.id === productShopId(product))?.name ||
+          state.shop.name,
         productId: product.id,
         title: product.title,
         cover: product.cover,
@@ -173,8 +200,8 @@ export function applyDemoCommand(
         quantity: item.quantity,
         amount: variantPrice(product, item.variant) * item.quantity,
         status: '待发货',
-        buyer: DEMO_RECIPIENT.name,
-        buyerId: DEMO_BUYER_ID,
+        buyer: actor.nickname,
+        buyerId: actor.id,
         recipient: { ...recipient },
         createdAt: new Date().toLocaleString('zh-CN'),
       })
@@ -184,6 +211,7 @@ export function applyDemoCommand(
     const order = state.orders.find((order) => order.id === command.id)
     if (!order) throw new DemoDomainError('订单不存在', 404)
     if (command.type === 'ship') {
+      if (!owns(order)) throw new DemoDomainError('只能处理本店订单', 403)
       if (order.status !== '待发货') throw new DemoDomainError('该订单当前无法发货', 409)
       const carrier = text(command.carrier, '物流公司', 30)
       const tracking = typeof command.tracking === 'string' ? command.tracking.trim() : ''
@@ -196,7 +224,7 @@ export function applyDemoCommand(
         shippedAt: new Date().toLocaleString('zh-CN'),
       })
     } else {
-      if (order.buyerId !== DEMO_BUYER_ID) throw new DemoDomainError('只能确认自己的订单', 403)
+      if (order.buyerId !== actor.id) throw new DemoDomainError('只能确认自己的订单', 403)
       if (order.status !== '待收货') throw new DemoDomainError('仅待收货订单可以确认收货', 409)
       Object.assign(order, { status: '已完成', completedAt: new Date().toLocaleString('zh-CN') })
     }
@@ -218,6 +246,7 @@ export function applyDemoCommand(
     if (command.type === 'editProduct') {
       const product = state.products.find((product) => product.id === command.id)
       if (!product) throw new DemoDomainError('商品不存在', 404)
+      if (!owns(product)) throw new DemoDomainError('只能编辑本店商品', 403)
       if (updatesStock && command.expectedStock !== undefined) {
         if (!Number.isSafeInteger(command.expectedStock) || Number(command.expectedStock) < 0)
           throw new DemoDomainError('请重新打开商品编辑后修改库存')
@@ -230,6 +259,7 @@ export function applyDemoCommand(
         throw new DemoDomainError('请选择演示商品图片')
       state.products.unshift({
         id: `product-${makeId()}`,
+        shopId,
         ...fields,
         stock: Number(command.stock),
         subtitle: '来自星屿小店的新心意',
@@ -243,17 +273,28 @@ export function applyDemoCommand(
   } else if (command.type === 'toggleProduct') {
     const product = state.products.find((product) => product.id === command.id)
     if (!product) throw new DemoDomainError('商品不存在', 404)
+    if (!owns(product)) throw new DemoDomainError('只能编辑本店商品', 403)
     product.published = !product.published
   } else if (command.type === 'editShop') {
-    state.shop = {
+    const fields = {
       name: text(command.name, '店铺名称（最多 20 字）', 20),
       description: text(command.description, '店铺介绍（最多 50 字）', 50),
     }
+    state.shops = marketplaceShops(state).map((shop) =>
+      shop.id === shopId ? { ...shop, ...fields } : shop,
+    )
+    if (shopId === DEMO_SHOP_ID) state.shop = fields
   } else if (command.type === 'reset') {
     state.datasetId = makeId()
-    state.products = DEMO_PRODUCTS.map((product) => ({ ...product }))
-    state.orders = []
-    state.shop = { name: '星屿周边馆', description: '认真收藏，每一份热爱' }
+    state.products = state.products.filter((product) => !owns(product))
+    state.orders = state.orders.filter((order) => !owns(order))
+    if (shopId === DEMO_SHOP_ID) {
+      state.products.unshift(...DEMO_PRODUCTS.map((product) => ({ ...product })))
+      state.shop = { name: '星屿周边馆', description: '认真收藏，每一份热爱' }
+      state.shops = marketplaceShops(state).map((shop) =>
+        shop.id === shopId ? { id: shopId, ...state.shop } : shop,
+      )
+    }
   }
   state.revision += 1
   return ids

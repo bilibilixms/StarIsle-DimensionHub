@@ -1,4 +1,5 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { test, expect } from './fixtures'
+import type { APIRequestContext, Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 
 const api = 'http://127.0.0.1:8787/api/demo'
@@ -235,6 +236,8 @@ test('an invalid recipient phone is blocked and the corrected phone persists', a
   await expect(page.getByText('请填写 11 位演示手机号', { exact: true })).toBeVisible()
   await page.getByTestId('recipient-phone').locator('input').fill('13800000001')
   await page.getByTestId('save-recipient').click()
+  await expect(page.getByTestId('save-recipient')).not.toBeVisible()
+  await expect(page.getByTestId('edit-recipient')).toContainText('13800000001')
   await page.reload()
   await page.getByTestId('nav-profile').click()
   await expect(page.getByTestId('edit-recipient')).toContainText('13800000001')

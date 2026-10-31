@@ -8,8 +8,11 @@ import {
   applyDemoCommand,
   createDemoMarketplace,
   DemoDomainError,
-  DEMO_BUYER_ID,
+  DEMO_SHOP_ID,
+  marketplaceShops,
+  productShopId,
 } from '../packages/shared/src/demo-domain.ts'
+import { createDemoAuth, authenticate, applyAuth } from './demo-auth.mjs'
 
 export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1' }) {
   let store
@@ -20,6 +23,13 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
   } catch (error) {
     if (error.code !== 'ENOENT') throw error
     store = { schema: 1, marketplace: createDemoMarketplace(randomUUID()), receipts: {} }
+    await persist(store)
+  }
+  if (!store.auth) {
+    store.auth = createDemoAuth()
+    store.receipts = Object.fromEntries(
+      Object.entries(store.receipts).map(([key, value]) => [`demo-user:${key}`, value]),
+    )
     await persist(store)
   }
   async function persist(next) {
@@ -34,10 +44,20 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
     queue = result.catch(() => {})
     return result
   }
-  function snapshot(role) {
+  function snapshot(role, identity) {
     const state = structuredClone(store.marketplace)
-    if (role === 'user')
-      state.orders = state.orders.filter((order) => order.buyerId === DEMO_BUYER_ID)
+    if (role === 'user') {
+      state.orders = state.orders.filter((order) => order.buyerId === identity?.account.id)
+    } else {
+      const shopId = identity.account.shopId
+      state.products = state.products.filter((product) => productShopId(product) === shopId)
+      state.orders = state.orders.filter((order) => productShopId(order) === shopId)
+      state.shop = marketplaceShops(state).find((shop) => shop.id === shopId) || {
+        name: '我的小店',
+        description: '',
+      }
+      state.shops = marketplaceShops(store.marketplace).filter((shop) => shop.id === shopId)
+    }
     return state
   }
   const server = createServer(async (request, response) => {
@@ -63,7 +83,7 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
       response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
       response.setHeader(
         'Access-Control-Allow-Headers',
-        'Content-Type, X-Demo-Role, X-Idempotency-Key',
+        'Content-Type, X-Demo-Role, X-Idempotency-Key, Authorization',
       )
       response.setHeader('Access-Control-Allow-Private-Network', 'true')
     }
@@ -75,20 +95,24 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
     const path = new URL(request.url, 'http://localhost').pathname
     if (request.method === 'GET' && path === '/health')
       return send(200, { status: 'ok', mode: 'local-demo' })
-    const role = request.headers['x-demo-role']
-    if (role !== 'user' && role !== 'merchant') return send(400, { message: '请选择演示角色' })
+    const role = request.headers['x-demo-role'] || 'user'
+    let identity
     try {
+      identity = authenticate(store, request.headers.authorization)
       if (request.method === 'GET' && path === '/api/demo/state') {
+        if (request.headers.authorization && !identity)
+          throw new DemoDomainError('登录已失效，请重新登录', 401)
+        if (!['user', 'merchant'].includes(role)) throw new DemoDomainError('请选择演示角色')
+        if (role === 'merchant' && !identity) throw new DemoDomainError('请先登录商家账号', 401)
+        if (identity && identity.role !== role) throw new DemoDomainError('请登录对应身份', 403)
         await queue
-        return send(200, { state: snapshot(role) })
+        return send(200, { state: snapshot(role, identity) })
       }
-      if (request.method !== 'POST' || path !== '/api/demo/commands')
+      const authAction = /^\/api\/demo\/auth\/(register|login|logout)$/.exec(path)?.[1]
+      if (request.method !== 'POST' || (path !== '/api/demo/commands' && !authAction))
         return send(404, { message: '接口不存在' })
       if (!request.headers['content-type']?.startsWith('application/json'))
         return send(415, { message: '请使用 JSON 请求' })
-      const key = request.headers['x-idempotency-key']
-      if (typeof key !== 'string' || !/^[a-zA-Z0-9-]{8,100}$/.test(key))
-        return send(400, { message: '操作标识无效，请重新操作' })
       const chunks = []
       let size = 0
       for await (const chunk of request) {
@@ -103,15 +127,30 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
       } catch {
         return send(400, { message: '请求 JSON 无效' })
       }
-      if (
-        !command ||
-        typeof command !== 'object' ||
-        Array.isArray(command) ||
-        typeof command.type !== 'string'
-      )
+      if (!command || typeof command !== 'object' || Array.isArray(command))
         return send(400, { message: '操作内容无效' })
+      if (authAction) {
+        const result = await transaction(async () => {
+          const next = structuredClone(store)
+          let response
+          if (authAction === 'logout') {
+            if (identity) delete next.auth.sessions[identity.token]
+            response = { success: true }
+          } else response = { session: applyAuth(next, authAction, command) }
+          await persist(next)
+          store = next
+          return response
+        })
+        return send(200, result)
+      }
+      if (!identity) throw new DemoDomainError('请先登录后再操作', 401)
+      if (identity.role !== role) throw new DemoDomainError('请登录对应身份', 403)
+      if (typeof command.type !== 'string') throw new DemoDomainError('操作内容无效')
+      const key = request.headers['x-idempotency-key']
+      if (typeof key !== 'string' || !/^[a-zA-Z0-9-]{8,100}$/.test(key))
+        return send(400, { message: '操作标识无效，请重新操作' })
       const result = await transaction(async () => {
-        const receiptKey = `${role}:${key}`
+        const receiptKey = `${identity.account.id}:${role}:${key}`
         const fingerprint = JSON.stringify(command)
         const previous = store.receipts[receiptKey]
         if (previous) {
@@ -119,14 +158,20 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
             throw new DemoDomainError('操作标识已用于其他内容', 409)
           if (previous.datasetId !== store.marketplace.datasetId)
             throw new DemoDomainError('演示场景已重置，请刷新后重新操作', 409)
-          return { state: snapshot(role), orderIds: previous.orderIds }
+          return { state: snapshot(role, identity), orderIds: previous.orderIds }
         }
         const next = structuredClone(store)
-        const orderIds = applyDemoCommand(next.marketplace, role, command, randomUUID)
+        const orderIds = applyDemoCommand(
+          next.marketplace,
+          role,
+          command,
+          randomUUID,
+          identity.actor,
+        )
         next.receipts[receiptKey] = { fingerprint, orderIds, datasetId: next.marketplace.datasetId }
         await persist(next)
         store = next
-        return { state: snapshot(role), orderIds }
+        return { state: snapshot(role, identity), orderIds }
       })
       send(200, result)
     } catch (error) {
@@ -134,7 +179,12 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
       send(error instanceof DemoDomainError ? error.status : 500, {
         message:
           error instanceof DemoDomainError ? error.message : '演示数据暂时无法保存，请稍后重试',
-        ...(error instanceof DemoDomainError ? { state: snapshot(role) } : {}),
+        ...(error instanceof DemoDomainError &&
+        path === '/api/demo/commands' &&
+        identity &&
+        identity.role === role
+          ? { state: snapshot(role, identity) }
+          : {}),
       })
     }
   })

@@ -6,6 +6,7 @@ import AppHeader from '@starisle/ui/AppHeader.vue'
 import BottomNav from '@starisle/ui/BottomNav.vue'
 import Icon from '@starisle/ui/Icon.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
+import { logoutDemo, openLogin } from '@starisle/shared/auth'
 import {
   createDemoProduct,
   DEMO_ASSETS,
@@ -165,8 +166,8 @@ async function saveShop() {
 }
 function reset() {
   uni.showModal({
-    title: '重置演示数据',
-    content: '恢复共享商品和店铺资料，并清空用户端与商家端的全部演示订单。此操作会影响两端。',
+    title: '重置本店演示数据',
+    content: '清空本店演示商品和订单。初始演示店铺会恢复样例商品，其他店铺的数据保留。',
     confirmColor: '#d9985d',
     async success(result) {
       if (!result.confirm || busy.value) return
@@ -180,6 +181,16 @@ function reset() {
       }
     },
   })
+}
+async function logout() {
+  try {
+    await logoutDemo()
+  } catch (cause) {
+    uni.showToast({
+      title: cause instanceof Error ? cause.message : '退出失败，请重试',
+      icon: 'none',
+    })
+  }
 }
 async function toggleProduct(id: string) {
   if (busy.value) return
@@ -450,10 +461,14 @@ async function toggleProduct(id: string) {
           </button>
           <button @click="reset">
             <Icon name="settings" :size="21" />
-            <text>重置共享演示场景</text>
+            <text>重置本店演示数据</text>
             <Icon name="chevron-right" :size="16" />
           </button>
         </view>
+        <button class="secondary-button" data-testid="switch-role" @click="openLogin('user')">
+          切换身份
+        </button>
+        <button class="secondary-button" data-testid="logout" @click="logout">退出登录</button>
         <text class="demo-explanation">
           当前为商家端视觉样板，商品、库存与订单已和用户端联动，所有支付与物流均为模拟。
         </text>

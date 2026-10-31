@@ -1,5 +1,4 @@
 import {
-  DEMO_BUYER_ID,
   DEMO_RECIPIENT,
   variantPrice,
   validateRecipient,
@@ -12,7 +11,9 @@ import {
   type DemoCheckoutLine,
   type DemoCommand,
   type DemoRecipient,
+  type DemoShop,
 } from './demo-domain'
+import { getDemoSession, clearDemoSession, openLogin, demoApiBase, requireDemoLogin } from './auth'
 export {
   DEMO_ASSETS,
   DEMO_PRODUCTS,
@@ -38,6 +39,7 @@ export interface DemoState {
   merchantOrders: DemoOrder[]
   products: DemoProduct[]
   shop: { name: string; description: string }
+  shops: DemoShop[]
 }
 interface LocalData {
   version: 2
@@ -56,17 +58,22 @@ export interface DemoCheckout {
   [key: string]: unknown
 }
 let activeRole: DemoRole = 'user'
-const base = (import.meta.env.VITE_DEMO_API_BASE_URL || 'http://127.0.0.1:8787').replace(/\/$/, '')
 export function setDemoRole(role: DemoRole) {
   activeRole = role
 }
 function key() {
-  return `starisle.linked-demo.v2.${activeRole}`
+  const id = getDemoSession()?.account.id
+  return id === 'demo-user'
+    ? `starisle.linked-demo.v2.${activeRole}`
+    : `starisle.linked-demo.v2.${activeRole}.${id || 'guest'}`
 }
-function load(): LocalData {
-  const stored = uni.getStorageSync(key()) as LocalData | undefined
+function load(storageKey = key()): LocalData {
+  const stored = uni.getStorageSync(storageKey) as LocalData | undefined
   if (stored?.version === 2) return stored
-  const legacy = uni.getStorageSync('starisle.visual-demo.v1') as Partial<DemoState> | undefined
+  const legacy =
+    getDemoSession()?.account.id === 'demo-user'
+      ? (uni.getStorageSync('starisle.visual-demo.v1') as Partial<DemoState> | undefined)
+      : undefined
   return {
     version: 2,
     favorites: Array.isArray(legacy?.favorites) ? legacy.favorites : [],
@@ -75,25 +82,31 @@ function load(): LocalData {
     pending: {},
   }
 }
-function save(data: LocalData): DemoState {
-  uni.setStorageSync(key(), data)
-  return getDemoState()
+function save(data: LocalData, storageKey = key(), role = activeRole): DemoState {
+  uni.setStorageSync(storageKey, data)
+  return getDemoState(storageKey, role)
 }
-export function getDemoState(): DemoState {
-  const data = load()
+export function getDemoState(storageKey = key(), role = activeRole): DemoState {
+  const data = load(storageKey)
   return {
     version: 2,
     favorites: data.favorites,
     cart: data.cart,
     recipient: data.recipient,
     products: data.marketplace?.products || [],
-    orders: data.marketplace?.orders.filter((order) => order.buyerId === DEMO_BUYER_ID) || [],
-    merchantOrders: activeRole === 'merchant' ? data.marketplace?.orders || [] : [],
+    orders: role === 'user' && getDemoSession() ? data.marketplace?.orders || [] : [],
+    merchantOrders: role === 'merchant' ? data.marketplace?.orders || [] : [],
     shop: data.marketplace?.shop || { name: '星屿周边馆', description: '认真收藏，每一份热爱' },
+    shops: data.marketplace?.shops || [
+      {
+        id: 'demo-shop',
+        ...(data.marketplace?.shop || { name: '星屿周边馆', description: '认真收藏，每一份热爱' }),
+      },
+    ],
   }
 }
-function merge(marketplace: DemoMarketplace): DemoState {
-  const data = load()
+function merge(marketplace: DemoMarketplace, storageKey = key(), role = activeRole): DemoState {
+  const data = load(storageKey)
   if (
     !data.marketplace ||
     data.marketplace.datasetId !== marketplace.datasetId ||
@@ -104,7 +117,7 @@ function merge(marketplace: DemoMarketplace): DemoState {
     data.cart = data.cart.filter((item) => ids.has(item.productId))
     data.favorites = data.favorites.filter((id) => ids.has(id))
   }
-  return save(data)
+  return save(data, storageKey, role)
 }
 class DemoRequestError extends Error {
   definite: boolean
@@ -117,15 +130,18 @@ function request(
   method: 'GET' | 'POST',
   command?: DemoCommand,
   operationId?: string,
+  storageKey = key(),
+  role = activeRole,
 ): Promise<{ state: DemoMarketplace; orderIds?: string[] }> {
   return new Promise((resolve, reject) => {
     uni.request({
-      url: `${base}/api/demo/${method === 'GET' ? 'state' : 'commands'}`,
+      url: `${demoApiBase}/api/demo/${method === 'GET' ? 'state' : 'commands'}`,
       method,
       data: command,
       header: {
         'Content-Type': 'application/json',
-        'X-Demo-Role': activeRole,
+        'X-Demo-Role': role,
+        ...(getDemoSession() ? { Authorization: `Bearer ${getDemoSession()!.token}` } : {}),
         ...(operationId ? { 'X-Idempotency-Key': operationId } : {}),
       },
       timeout: 5000,
@@ -138,7 +154,11 @@ function request(
         if (response.statusCode >= 200 && response.statusCode < 300 && body?.state?.version === 1)
           resolve(body as { state: DemoMarketplace; orderIds?: string[] })
         else {
-          if (body?.state?.version === 1) merge(body.state)
+          if (body?.state?.version === 1) merge(body.state, storageKey, role)
+          if (response.statusCode === 401 && storageKey === key()) {
+            clearDemoSession()
+            openLogin(role)
+          }
           reject(
             new DemoRequestError(
               body?.message || '演示服务暂时不可用，请稍后重试',
@@ -154,14 +174,20 @@ function request(
   })
 }
 export async function syncDemoState(): Promise<DemoState> {
-  return merge((await request('GET')).state)
+  const storageKey = key()
+  const role = activeRole
+  return merge(
+    (await request('GET', undefined, undefined, storageKey, role)).state,
+    storageKey,
+    role,
+  )
 }
 const inFlight = new Map<string, Promise<DemoState>>()
 function mutate(
   command: DemoCommand,
   afterSuccess?: (data: LocalData) => void,
 ): Promise<DemoState> {
-  const fingerprint = JSON.stringify(command)
+  const fingerprint = `${key()}:${JSON.stringify(command)}`
   const existing = inFlight.get(fingerprint)
   if (existing) return existing
   const pending = execute(command, afterSuccess).finally(() => {
@@ -175,28 +201,31 @@ async function execute(
   afterSuccess?: (data: LocalData) => void,
 ): Promise<DemoState> {
   const fingerprint = JSON.stringify(command)
-  const data = load()
+  const storageKey = key()
+  const role = activeRole
+  const data = load(storageKey)
   const id = data.pending[fingerprint] || `op-${Date.now()}-${Math.random().toString(36).slice(2)}`
   data.pending[fingerprint] = id
-  save(data)
+  save(data, storageKey, role)
   try {
-    const response = await request('POST', command, id)
-    merge(response.state)
-    const latest = load()
+    const response = await request('POST', command, id, storageKey, role)
+    merge(response.state, storageKey, role)
+    const latest = load(storageKey)
     afterSuccess?.(latest)
     delete latest.pending[fingerprint]
-    return save(latest)
+    return save(latest, storageKey, role)
   } catch (error) {
     // Retain the ID after an uncertain response so a retry cannot duplicate a paid order.
     if (error instanceof DemoRequestError && error.definite) {
-      const latest = load()
+      const latest = load(storageKey)
       delete latest.pending[fingerprint]
-      save(latest)
+      save(latest, storageKey, role)
     }
     throw error
   }
 }
 export function toggleFavorite(id: string): DemoState {
+  if (!requireDemoLogin('user', `/pages/product/detail?id=${id}`)) return getDemoState()
   const data = load()
   data.favorites = data.favorites.includes(id)
     ? data.favorites.filter((item) => item !== id)
