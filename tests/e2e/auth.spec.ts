@@ -1,4 +1,4 @@
-import { pay } from './checkout-flows'
+import { ensureCheckoutAddress, pay, viewPaidOrders } from './checkout-flows'
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test'
 import { randomInt, randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
@@ -246,7 +246,7 @@ test('the same account can register a merchant role and enter both roles in one 
   await expect(page.getByTestId('home-hero')).toBeVisible()
 })
 
-test('a registered merchant publishes in the unified app and receives only its own orders', async ({
+test('new accounts complete a searched cart purchase, prevent double payment and persist shipment and receipt', async ({
   page,
   browser,
   request,
@@ -272,23 +272,71 @@ test('a registered merchant publishes in the unified app and receives only its o
       product.title === '注册店铺专属挂件' && product.shopId === merchant.account.shopId,
   )
   const customer = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  let releasePayment: (() => void) | undefined
   try {
     await register(customer, phone())
+    const buyer = await session(customer)
+    await customer.getByTestId('product-search').locator('input').fill('注册店铺专属挂件')
     await customer.getByTestId(`product-${product.id}`).click()
     await expect(customer.getByText('联动注册小店', { exact: true })).toBeVisible()
-    await customer.getByTestId('buy-now').click()
+    await customer.getByTestId('add-to-cart').click()
     await customer.getByTestId('confirm-sku').click()
-    await pay(customer)
+    await customer.getByLabel('购物车', { exact: true }).click()
+    await expect(customer.getByTestId('cart-total')).toHaveText('¥29')
+    await customer.getByTestId('cart-checkout').click()
+    await ensureCheckoutAddress(customer)
+    let payments = 0
+    const paymentGate = new Promise<void>((resolve) => {
+      releasePayment = resolve
+    })
+    await customer.route('**/api/demo/commands', async (route) => {
+      if (route.request().postDataJSON()?.type === 'checkout') {
+        payments += 1
+        await paymentGate
+      }
+      await route.continue()
+    })
+    await customer.getByTestId('confirm-payment').dblclick()
+    await expect(customer.getByTestId('confirm-payment')).toHaveAttribute('disabled', 'true')
+    await expect.poll(() => payments).toBe(1)
+    expect((await state(request, buyer.token)).orders).toHaveLength(0)
+    releasePayment!()
+    await viewPaidOrders(customer)
     await expect(customer.getByText('实付 ¥29', { exact: true })).toBeVisible()
-    const buyer = await session(customer)
-    const order = (await state(request, buyer.token)).orders[0]
+    const paid = await state(request, buyer.token)
+    expect(paid.orders).toHaveLength(1)
+    const order = paid.orders[0]
+    expect(paid.products.find((item: { id: string }) => item.id === product.id).stock).toBe(1)
     await page.getByTestId('nav-orders').click()
     await expect(page.getByTestId(`order-${order.id}`)).toBeVisible()
     await expect(page.locator('.merchant-order')).toHaveCount(1)
+    await page.getByTestId(`ship-${order.id}`).click()
+    await page.getByTestId('ship-tracking').locator('input').fill('SF202611020001')
+    await page.getByTestId('confirm-ship').click()
+    const userOrder = customer.getByTestId(`user-order-${order.id}`)
+    await expect(userOrder).toContainText('待收货')
+    await expect(userOrder).toContainText('SF202611020001')
+    await customer.getByTestId(`receive-${order.id}`).click()
+    await customer.locator('uni-modal').getByText('确认收货', { exact: true }).click()
+    await expect(userOrder).toContainText('已完成')
+    await page.getByTestId('status-已完成').click()
+    await expect(page.getByTestId(`order-${order.id}`)).toContainText('已完成')
+    await customer.reload()
+    await customer.getByTestId('nav-profile').click()
+    await expect(customer.getByTestId(`user-order-${order.id}`)).toContainText('已完成')
+    await customer.getByTestId('nav-cart').click()
+    await expect(customer.getByText('口袋里还没有心动好物')).toBeVisible()
+    await page.reload()
+    await page.getByTestId('nav-orders').click()
+    await page.getByTestId('status-已完成').click()
+    await expect(page.getByTestId(`order-${order.id}`)).toContainText('已完成')
+    expect(payments).toBe(1)
+    expect((await state(request, buyer.token)).orders).toHaveLength(1)
   } finally {
+    releasePayment?.()
     await customer.close()
+    expect((await command(request, { type: 'reset' }, merchant)).ok()).toBe(true)
   }
-  expect((await command(request, { type: 'reset' }, merchant)).ok()).toBe(true)
 })
 
 test('a revoked login returns to the entry instead of continuing with cached private data', async ({
