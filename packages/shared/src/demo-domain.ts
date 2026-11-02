@@ -1,6 +1,7 @@
 export type DemoRole = 'user' | 'merchant'
 export const DEMO_MERCHANT_VERIFICATION_CODE = '1234'
 export type DemoVariant = 'standard' | 'gift'
+export type DemoShopStatus = 'PENDING' | 'ACTIVE' | 'REJECTED' | 'SUSPENDED'
 export interface DemoProduct {
   id: string
   shopId?: string
@@ -13,6 +14,9 @@ export interface DemoProduct {
   stock: number
   sold: number
   published: boolean
+  adminHidden?: boolean
+  adminReason?: string
+  managementVersion?: number
 }
 export interface DemoRecipient {
   name: string
@@ -71,13 +75,17 @@ export interface DemoMarketplace {
   revision: number
   products: DemoProduct[]
   orders: DemoOrder[]
-  shop: { name: string; description: string }
+  shop: Omit<DemoShop, 'id'>
   shops?: DemoShop[]
 }
 export interface DemoShop {
   id: string
   name: string
   description: string
+  status?: DemoShopStatus
+  reason?: string
+  ownerDisabled?: boolean
+  managementVersion?: number
 }
 export interface DemoActor {
   id: string
@@ -90,6 +98,13 @@ export function productShopId(product: { shopId?: string }): string {
 }
 export function marketplaceShops(state: DemoMarketplace): DemoShop[] {
   return state.shops || [{ id: DEMO_SHOP_ID, ...state.shop }]
+}
+export function shopCanSell(state: DemoMarketplace, id: string): boolean {
+  const shop = marketplaceShops(state).find((shop) => shop.id === id)
+  return !!shop && (!shop.status || shop.status === 'ACTIVE') && !shop.ownerDisabled
+}
+export function productVisible(state: DemoMarketplace, product: DemoProduct): boolean {
+  return product.published && !product.adminHidden && shopCanSell(state, productShopId(product))
 }
 export interface DemoCheckoutLine {
   productId: string
@@ -152,7 +167,9 @@ export function validateDemoStock(
     totals.set(item.productId, (totals.get(item.productId) || 0) + item.quantity)
   }
   for (const [id, quantity] of totals) {
-    const product = products.find((product) => product.id === id && product.published)
+    const product = products.find(
+      (product) => product.id === id && product.published && !product.adminHidden,
+    )
     if (!product) throw new DemoDomainError('商品已下架，请重新选择', 409)
     if (quantity > product.stock)
       throw new DemoDomainError(`「${product.title}」库存不足，仅剩 ${product.stock} 件`, 409)
@@ -175,12 +192,19 @@ export function applyDemoCommand(
     'editShop',
     'ship',
     'reset',
+    'submitShopReview',
   ]
   if (!(role === 'user' ? userCommands : merchantCommands).includes(command.type))
     throw new DemoDomainError('当前演示角色不能执行此操作', 403)
   const ids: string[] = []
   const shopId = actor.shopId || DEMO_SHOP_ID
   const owns = (item: { shopId?: string }) => productShopId(item) === shopId
+  if (
+    role === 'merchant' &&
+    ['createProduct', 'editProduct', 'toggleProduct', 'reset'].includes(command.type) &&
+    !shopCanSell(state, shopId)
+  )
+    throw new DemoDomainError('店铺尚未通过审核或已暂停，暂不能管理商品', 403)
   if (command.type === 'checkout') {
     if (command.datasetId && command.datasetId !== state.datasetId)
       throw new DemoDomainError('演示场景已重置，请刷新后重新确认', 409)
@@ -197,7 +221,7 @@ export function applyDemoCommand(
       )
         throw new DemoDomainError('请选择有效的规格和数量')
       const product = state.products.find(
-        (product) => product.id === item.productId && product.published,
+        (product) => product.id === item.productId && productVisible(state, product),
       )
       if (!product) throw new DemoDomainError('商品已下架，请刷新后重新选择', 409)
       if (item.expectedPrice !== variantPrice(product, item.variant))
@@ -303,6 +327,7 @@ export function applyDemoCommand(
           throw new DemoDomainError('库存已变化，请重新打开商品编辑后确认库存', 409)
       }
       Object.assign(product, fields)
+      product.managementVersion = (product.managementVersion || 0) + 1
     } else {
       if (command.cover !== DEMO_ASSETS.hero && command.cover !== DEMO_ASSETS.figurine)
         throw new DemoDomainError('请选择演示商品图片')
@@ -323,25 +348,49 @@ export function applyDemoCommand(
     const product = state.products.find((product) => product.id === command.id)
     if (!product) throw new DemoDomainError('商品不存在', 404)
     if (!owns(product)) throw new DemoDomainError('只能编辑本店商品', 403)
+    if (product.adminHidden) throw new DemoDomainError('商品已由管理员下架，请查看处理原因', 403)
     product.published = !product.published
+    product.managementVersion = (product.managementVersion || 0) + 1
   } else if (command.type === 'editShop') {
     const fields = {
       name: text(command.name, '店铺名称（最多 20 字）', 20),
       description: text(command.description, '店铺介绍（最多 50 字）', 50),
     }
     state.shops = marketplaceShops(state).map((shop) =>
-      shop.id === shopId ? { ...shop, ...fields } : shop,
+      shop.id === shopId
+        ? { ...shop, ...fields, managementVersion: (shop.managementVersion || 0) + 1 }
+        : shop,
     )
     if (shopId === DEMO_SHOP_ID) state.shop = fields
+  } else if (command.type === 'submitShopReview') {
+    const shop = marketplaceShops(state).find((shop) => shop.id === shopId)
+    if (!shop || shop.status !== 'REJECTED')
+      throw new DemoDomainError('仅审核未通过的店铺可以重新提交', 409)
+    shop.status = 'PENDING'
+    shop.reason = ''
+    shop.managementVersion = (shop.managementVersion || 0) + 1
+    state.shops = marketplaceShops(state)
   } else if (command.type === 'reset') {
+    if (state.products.some((product) => owns(product) && product.adminHidden))
+      throw new DemoDomainError('本店有管理员下架商品，恢复展示后才能重置演示数据', 403)
+    const versions = new Map(
+      state.products.filter(owns).map((product) => [product.id, product.managementVersion || 0]),
+    )
     state.datasetId = makeId()
     state.products = state.products.filter((product) => !owns(product))
     state.orders = state.orders.filter((order) => !owns(order))
     if (shopId === DEMO_SHOP_ID) {
-      state.products.unshift(...DEMO_PRODUCTS.map((product) => ({ ...product })))
+      state.products.unshift(
+        ...DEMO_PRODUCTS.map((product) => ({
+          ...product,
+          managementVersion: (versions.get(product.id) || 0) + 1,
+        })),
+      )
       state.shop = { name: '星屿周边馆', description: '认真收藏，每一份热爱' }
       state.shops = marketplaceShops(state).map((shop) =>
-        shop.id === shopId ? { id: shopId, ...state.shop } : shop,
+        shop.id === shopId
+          ? { ...shop, ...state.shop, managementVersion: (shop.managementVersion || 0) + 1 }
+          : shop,
       )
     }
   }

@@ -11,8 +11,17 @@ import {
   DEMO_SHOP_ID,
   marketplaceShops,
   productShopId,
+  productVisible,
+  shopCanSell,
 } from '../packages/shared/src/demo-domain.ts'
-import { createDemoAuth, authenticate, applyAuth } from './demo-auth.mjs'
+import {
+  createDemoAuth,
+  ensureDemoAdmin,
+  authenticate,
+  applyAuth,
+  sessionView,
+} from './demo-auth.mjs'
+import { adminSnapshot, applyAdminCommand } from './demo-admin.mjs'
 
 export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1' }) {
   let store
@@ -32,6 +41,7 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
     )
     await persist(store)
   }
+  if (ensureDemoAdmin(store.auth)) await persist(store)
   async function persist(next) {
     await mkdir(dirname(dataFile), { recursive: true })
     const temporary = `${dataFile}.${randomUUID()}.tmp`
@@ -48,6 +58,11 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
     const state = structuredClone(store.marketplace)
     if (role === 'user') {
       state.orders = state.orders.filter((order) => order.buyerId === identity?.account.id)
+      state.products = state.products.map((product) => ({
+        ...product,
+        published: productVisible(state, product),
+      }))
+      state.shops = marketplaceShops(state).filter((shop) => shopCanSell(state, shop.id))
     } else {
       const shopId = identity.account.shopId
       state.products = state.products.filter((product) => productShopId(product) === shopId)
@@ -99,17 +114,35 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
     let identity
     try {
       identity = authenticate(store, request.headers.authorization)
+      if (request.method === 'GET' && path === '/api/demo/auth/session') {
+        await queue
+        identity = authenticate(store, request.headers.authorization)
+        if (!identity) throw new DemoDomainError('登录已失效，请重新登录', 401)
+        return send(200, { session: sessionView(identity) })
+      }
+      if (request.method === 'GET' && path === '/api/demo/admin/state') {
+        await queue
+        identity = authenticate(store, request.headers.authorization)
+        if (!identity) throw new DemoDomainError('请先登录管理员账号', 401)
+        if (identity.role !== 'admin') throw new DemoDomainError('仅管理员可以访问', 403)
+        return send(200, { state: adminSnapshot(store) })
+      }
       if (request.method === 'GET' && path === '/api/demo/state') {
+        await queue
+        identity = authenticate(store, request.headers.authorization)
         if (request.headers.authorization && !identity)
           throw new DemoDomainError('登录已失效，请重新登录', 401)
         if (!['user', 'merchant'].includes(role)) throw new DemoDomainError('请选择演示角色')
         if (role === 'merchant' && !identity) throw new DemoDomainError('请先登录商家账号', 401)
         if (identity && identity.role !== role) throw new DemoDomainError('请登录对应身份', 403)
-        await queue
         return send(200, { state: snapshot(role, identity) })
       }
       const authAction = /^\/api\/demo\/auth\/(register|login|logout)$/.exec(path)?.[1]
-      if (request.method !== 'POST' || (path !== '/api/demo/commands' && !authAction))
+      const adminCommand = path === '/api/demo/admin/commands'
+      if (
+        request.method !== 'POST' ||
+        (path !== '/api/demo/commands' && !adminCommand && !authAction)
+      )
         return send(404, { message: '接口不存在' })
       if (!request.headers['content-type']?.startsWith('application/json'))
         return send(415, { message: '请使用 JSON 请求' })
@@ -144,12 +177,41 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
         return send(200, result)
       }
       if (!identity) throw new DemoDomainError('请先登录后再操作', 401)
+      if (adminCommand) {
+        if (identity.role !== 'admin') throw new DemoDomainError('仅管理员可以执行此操作', 403)
+        const key = request.headers['x-idempotency-key']
+        if (typeof key !== 'string' || !/^[a-zA-Z0-9-]{8,100}$/.test(key))
+          throw new DemoDomainError('操作标识无效，请重新操作')
+        const result = await transaction(async () => {
+          const current = authenticate(store, request.headers.authorization)
+          if (!current) throw new DemoDomainError('登录已失效，请重新登录', 401)
+          const receiptKey = `${current.account.id}:admin:${key}`
+          const fingerprint = JSON.stringify(command)
+          const previous = store.receipts[receiptKey]
+          if (previous) {
+            if (previous.fingerprint !== fingerprint)
+              throw new DemoDomainError('操作标识已用于其他内容', 409)
+            return { state: adminSnapshot(store) }
+          }
+          const next = structuredClone(store)
+          applyAdminCommand(next, command, current, randomUUID)
+          next.receipts[receiptKey] = { fingerprint }
+          await persist(next)
+          store = next
+          return { state: adminSnapshot(store) }
+        })
+        return send(200, result)
+      }
       if (identity.role !== role) throw new DemoDomainError('请登录对应身份', 403)
+      if (!['user', 'merchant'].includes(role))
+        throw new DemoDomainError('当前身份不能执行交易操作', 403)
       if (typeof command.type !== 'string') throw new DemoDomainError('操作内容无效')
       const key = request.headers['x-idempotency-key']
       if (typeof key !== 'string' || !/^[a-zA-Z0-9-]{8,100}$/.test(key))
         return send(400, { message: '操作标识无效，请重新操作' })
       const result = await transaction(async () => {
+        if (!authenticate(store, request.headers.authorization))
+          throw new DemoDomainError('登录已失效，请重新登录', 401)
         const receiptKey = `${identity.account.id}:${role}:${key}`
         const fingerprint = JSON.stringify(command)
         const previous = store.receipts[receiptKey]
@@ -182,7 +244,8 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
         ...(error instanceof DemoDomainError &&
         path === '/api/demo/commands' &&
         identity &&
-        identity.role === role
+        identity.role === role &&
+        ['user', 'merchant'].includes(role)
           ? { state: snapshot(role, identity) }
           : {}),
       })

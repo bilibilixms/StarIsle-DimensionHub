@@ -1,4 +1,5 @@
 import { ensureCheckoutAddress, pay, viewPaidOrders } from './checkout-flows'
+import { approveMerchant } from './merchant-approval'
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test'
 import { randomInt, randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
@@ -22,6 +23,11 @@ async function register(page: Page, number: string, role = 'user', shop = '') {
     await page.getByTestId('auth-submit').click()
   }
   await expect(page.getByTestId(role === 'merchant' ? 'waiting-orders' : 'home-hero')).toBeVisible()
+  if (role === 'merchant') {
+    const current = await session(page)
+    await approveMerchant(page.request, current.account.shopId)
+    await expect(page.getByTestId('merchant-review-notice')).toHaveCount(0)
+  }
 }
 async function login(page: Page, number: string, role = 'user') {
   await page.goto(`${root}pages/auth/index?role=${role}`)
@@ -66,11 +72,12 @@ test.beforeEach(async ({ request }) => {
   )
 })
 
-test('the unified entry shows four roles, keeps future roles closed and limits guest access to users', async ({
+test('the unified entry shows five roles, keeps future roles closed and limits guest access to users', async ({
   page,
 }) => {
   await page.goto(root)
   await expect(page.getByTestId('auth-screen')).toBeVisible()
+  await expect(page.getByTestId('role-admin')).toBeVisible()
   await expect(page.getByTestId('auth-browse')).toBeVisible()
   for (const role of ['artist', 'event']) {
     await page.getByTestId(`role-${role}`).click()

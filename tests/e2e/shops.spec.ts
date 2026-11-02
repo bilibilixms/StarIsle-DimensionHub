@@ -1,3 +1,4 @@
+import { approveMerchant } from './merchant-approval'
 import { pay } from './checkout-flows'
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { randomInt, randomUUID } from 'node:crypto'
@@ -35,6 +36,7 @@ async function shop(request: APIRequestContext, name: string) {
   })
   expect(response.ok()).toBe(true)
   const merchant: Merchant = (await response.json()).session
+  await approveMerchant(request, merchant.account.shopId)
   merchants.push(merchant)
   return merchant
 }

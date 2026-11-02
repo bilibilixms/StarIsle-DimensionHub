@@ -2,10 +2,11 @@
 import { ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import AuthScreen from '@starisle/ui/AuthScreen.vue'
-const role = ref<'user' | 'merchant'>('user')
+import type { AuthRole } from '@starisle/shared/auth'
+const role = ref<AuthRole>('user')
 const next = ref('')
 onLoad((query) => {
-  role.value = query?.role === 'merchant' ? 'merchant' : 'user'
+  role.value = query?.role === 'admin' ? 'admin' : query?.role === 'merchant' ? 'merchant' : 'user'
   next.value = query?.next || ''
 })
 </script>

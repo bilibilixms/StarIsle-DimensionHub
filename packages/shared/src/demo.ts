@@ -61,7 +61,7 @@ export interface DemoState {
   orders: DemoOrder[]
   merchantOrders: DemoOrder[]
   products: DemoProduct[]
-  shop: { name: string; description: string }
+  shop: Omit<DemoShop, 'id'>
   shops: DemoShop[]
   addresses: DemoAddress[]
   defaultAddressId?: string
@@ -640,4 +640,7 @@ export function createDemoProduct(
 }
 export function editDemoShop(name: string, description: string): Promise<DemoState> {
   return mutate({ type: 'editShop', name, description })
+}
+export function submitShopReview(): Promise<DemoState> {
+  return mutate({ type: 'submitShopReview' })
 }

@@ -23,7 +23,8 @@ const visiblePassword = ref(false)
 const busy = ref(false)
 const error = ref('')
 const merchant = computed(() => role.value === 'merchant')
-const available = computed(() => role.value === 'user' || merchant.value)
+const admin = computed(() => role.value === 'admin')
+const available = computed(() => role.value === 'user' || merchant.value || admin.value)
 const verifying = computed(
   () => merchant.value && mode.value === 'register' && qualificationStep.value,
 )
@@ -33,16 +34,22 @@ const roles = [
   { key: 'merchant', name: '商家', copy: '经营自己的小店', icon: 'bag', tone: 'orange' },
   { key: 'artist', name: '画师', copy: '暂未开放', icon: 'brush', tone: 'muted' },
   { key: 'event', name: '漫展方', copy: '暂未开放', icon: 'ticket', tone: 'muted' },
+  { key: 'admin', name: '管理员', copy: '管理星屿平台', icon: 'shield', tone: 'purple' },
 ]
 watch(
   () => props.initialRole,
   (value) => {
     role.value = value
+    if (value === 'admin') mode.value = 'login'
   },
   { immediate: true },
 )
 function selectRole(value: string) {
   if (busy.value) return
+  if (value === 'admin' || admin.value) {
+    mode.value = 'login'
+    phone.value = ''
+  }
   role.value = value
   error.value = ''
   password.value = ''
@@ -54,7 +61,7 @@ function resetVerification() {
   error.value = ''
 }
 function selectMode(value: 'login' | 'register') {
-  if (busy.value) return
+  if (busy.value || (admin.value && value === 'register')) return
   mode.value = value
   resetVerification()
 }
@@ -63,7 +70,7 @@ async function submit() {
   error.value = ''
   busy.value = true
   try {
-    validateDemoCredentials(phone.value, password.value)
+    validateDemoCredentials(phone.value, password.value, role.value as AuthRole)
     if (merchant.value && mode.value === 'register' && !qualificationStep.value) {
       qualificationStep.value = true
       return
@@ -116,6 +123,7 @@ async function submit() {
         :class="{
           selected: role === item.key,
           upcoming: item.key === 'artist' || item.key === 'event',
+          'admin-option': item.key === 'admin',
         }"
         :disabled="busy"
         :data-testid="`role-${item.key}`"
@@ -141,6 +149,7 @@ async function submit() {
           登录
         </button>
         <button
+          v-if="!admin"
           :class="{ active: mode === 'register' }"
           :disabled="busy"
           data-testid="auth-register"
@@ -160,15 +169,15 @@ async function submit() {
       </view>
       <template v-if="!verifying">
         <view class="field">
-          <text class="field-label">手机号</text>
+          <text class="field-label">{{ admin ? '管理员账号' : '手机号' }}</text>
           <input
             v-model="phone"
-            type="number"
-            maxlength="11"
+            :type="admin ? 'text' : 'number'"
+            :maxlength="admin ? 64 : 11"
             :disabled="busy"
-            placeholder="请输入 11 位手机号"
-            aria-label="手机号"
-            data-testid="auth-phone"
+            :placeholder="admin ? '请输入管理员账号' : '请输入 11 位手机号'"
+            :aria-label="admin ? '管理员账号' : '手机号'"
+            :data-testid="admin ? 'auth-username' : 'auth-phone'"
           />
         </view>
         <view class="field">
@@ -179,7 +188,7 @@ async function submit() {
               :password="!visiblePassword"
               maxlength="128"
               :disabled="busy"
-              placeholder="请输入至少 6 位密码"
+              :placeholder="admin ? '请输入管理员密码' : '请输入至少 6 位密码'"
               aria-label="密码"
               data-testid="auth-password"
               confirm-type="done"
@@ -212,7 +221,7 @@ async function submit() {
       <view v-else class="qualification-panel" data-testid="merchant-qualification">
         <text class="qualification-title">商家资质验证</text>
         <text class="qualification-copy">
-          用于模拟商家资质与文件手续审核，输入演示验证码后即可开通商家身份。
+          输入演示验证码后提交入驻申请，管理员审核通过后即可上架商品。
         </text>
         <text class="qualification-account">注册手机号：{{ phone }}</text>
         <view class="qualification-demo" data-testid="merchant-demo-code">
@@ -250,12 +259,14 @@ async function submit() {
             : mode === 'register'
               ? merchant
                 ? verifying
-                  ? '完成验证并注册'
+                  ? '完成验证并提交申请'
                   : '下一步：资质验证'
                 : '注册并登录'
-              : merchant
-                ? '登录商家工作台'
-                : '登录星屿'
+              : admin
+                ? '登录管理员入口'
+                : merchant
+                  ? '登录商家工作台'
+                  : '登录星屿'
         }}
       </button>
       <button
@@ -268,7 +279,7 @@ async function submit() {
         返回修改注册信息
       </button>
       <button
-        v-if="!merchant"
+        v-if="role === 'user'"
         class="browse-button"
         :disabled="busy"
         data-testid="auth-browse"
@@ -277,14 +288,15 @@ async function submit() {
         先逛逛，发现喜欢的好物
         <Icon name="chevron-right" tone="muted" :size="14" />
       </button>
-      <text class="auth-note">
+      <text v-if="admin" class="auth-note">管理员账号由平台预设，不开放自行注册。</text>
+      <text v-else class="auth-note">
         {{
           merchant && mode === 'register'
             ? '商家注册需完成模拟资质验证，不发送短信。'
             : '手机号仅校验格式，不发送短信。'
         }}{{ '\n' }}请使用虚构手机号和非日常使用的密码。
       </text>
-      <text class="demo-account">已有演示账号：13800000000 / 123456</text>
+      <text v-if="!admin" class="demo-account">已有演示账号：13800000000 / 123456</text>
     </view>
     <view v-else class="coming-soon" data-testid="auth-coming-soon">
       <Icon name="sparkles" tone="purple" :size="32" />
@@ -439,6 +451,10 @@ async function submit() {
 .identity-option.selected {
   border-color: var(--auth-accent);
   background: var(--auth-tint);
+}
+.admin-option {
+  grid-column: 1 / -1;
+  min-height: 58px;
 }
 .identity-copy {
   flex: 1;

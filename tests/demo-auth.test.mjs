@@ -54,16 +54,42 @@ async function fixture(t, legacy = false) {
   }
   return {
     call,
-    register: (phone, role = 'user', password = '123456') =>
-      call('auth/register', {
+    // Trading regressions use an approved shop; pending/rejected flows have dedicated admin tests.
+    register: async (phone, role = 'user', password = '123456') => {
+      const result = await call('auth/register', {
         role,
         phone,
         password,
         ...(role === 'merchant' ? { qualificationCode: '1234' } : {}),
-      }),
+      })
+      if (result.status === 200 && role === 'merchant') {
+        const admin = (
+          await call('auth/login', { role: 'admin', username: 'admin', password: '123' })
+        ).session
+        const state = (await call('admin/state', undefined, admin)).state
+        const shop = state.shops.find((shop) => shop.id === result.session.account.shopId)
+        assert.equal(
+          (
+            await call(
+              'admin/commands',
+              {
+                type: 'reviewShop',
+                id: shop.id,
+                version: shop.managementVersion,
+                decision: 'approve',
+              },
+              admin,
+            )
+          ).status,
+          200,
+        )
+      }
+      return result
+    },
     login: (phone = '13800000000', role = 'user', password = '123456') =>
       call('auth/login', { role, phone, password }),
     read: async () => JSON.parse(await readFile(dataFile, 'utf8')),
+    write: async (store) => writeFile(dataFile, JSON.stringify(store)),
     restart: async () => {
       await app.close()
       app = await startDemoServer({ dataFile, port: 0 })
@@ -91,7 +117,7 @@ test('registration validates phone and minimum password, blocks inactive roles a
   assert.equal((await app.login('13800000001', 'user', 'badpass')).status, 401)
   const saved = await app.read()
   assert.ok(!JSON.stringify(saved).includes('abcdef'))
-  assert.equal(saved.auth.accounts.length, 2)
+  assert.equal(saved.auth.accounts.length, 3)
 })
 
 test('a shared phone can open another role with the original password and cannot acquire disabled roles', async (t) => {
@@ -248,7 +274,7 @@ test('merchant registration requires the simulated qualification code before cre
     assert.equal(result.status, 400)
     assert.match(result.message, /资质验证码/)
   }
-  assert.equal((await app.read()).auth.accounts.length, 1)
+  assert.equal((await app.read()).auth.accounts.length, 2)
   const merchant = await app.call('auth/register', { ...merchantForm, qualificationCode: '1234' })
   assert.equal(merchant.status, 200)
   assert.deepEqual(merchant.session.account.roles, ['merchant'])
@@ -353,4 +379,123 @@ test('multi-shop checkout is atomic, splits one order per shop and keeps shippin
   assert.deepEqual(retry.orderIds, paid.orderIds)
   assert.equal(retry.state.orders.length, 2)
   assert.equal(retry.state.products.find((product) => product.id === id).stock, 1)
+})
+
+test('preset administrator accepts admin / 123, rejects wrong credentials and keeps a salted digest', async (t) => {
+  const app = await fixture(t)
+  for (const credentials of [
+    { username: 'admin', password: 'wrong' },
+    { username: 'other', password: '123' },
+  ])
+    assert.equal((await app.call('auth/login', { role: 'admin', ...credentials })).status, 401)
+  assert.equal((await app.call('auth/login', { role: 'admin', password: '123' })).status, 400)
+  const response = await app.call('auth/login', {
+    role: 'admin',
+    username: ' admin ',
+    password: '123',
+  })
+  assert.equal(response.status, 200)
+  assert.equal(response.session.account.username, 'admin')
+  assert.equal(response.session.role, 'admin')
+  assert.deepEqual(response.session.account.roles, ['admin'])
+  assert.equal(response.session.account.hash, undefined)
+  assert.equal(response.session.account.salt, undefined)
+  const account = (await app.read()).auth.accounts.find((account) => account.id === 'demo-admin')
+  assert.equal(account.password, undefined)
+  assert.equal(account.salt.length, 32)
+  assert.equal(account.hash.length, 64)
+  for (const role of ['user', 'merchant'])
+    assert.equal((await app.register('13800000020', role, '123')).status, 400)
+})
+
+test('administrator registration and trading are denied and regular identities cannot become administrators', async (t) => {
+  const app = await fixture(t)
+  const admin = (
+    await app.call('auth/login', { role: 'admin', username: 'admin', password: '123' })
+  ).session
+  const user = (await app.login()).session
+  const merchant = (await app.login('13800000000', 'merchant')).session
+  const before = await app.read()
+  assert.equal(
+    (await app.call('auth/register', { role: 'admin', username: 'admin', password: '123' })).status,
+    403,
+  )
+  assert.equal((await app.register('13800000000', 'admin')).status, 403)
+  for (const session of [user, merchant]) {
+    const current = await app.call('auth/session', undefined, session)
+    assert.equal(current.status, 200)
+    assert.equal(current.session.role, session.role)
+    assert.ok(!current.session.account.roles.includes('admin'))
+    assert.equal(
+      (await app.call('commands', { type: 'reset' }, session, { 'X-Demo-Role': 'admin' })).status,
+      403,
+    )
+  }
+  assert.equal((await app.call('commands', checkout, admin)).status, 403)
+  assert.equal(
+    (await app.call('commands', { type: 'reset' }, admin, { 'X-Demo-Role': 'merchant' })).status,
+    403,
+  )
+  assert.equal((await app.call('state', undefined, admin)).status, 400)
+  assert.equal((await app.call('state', undefined, admin, { 'X-Demo-Role': 'user' })).status, 403)
+  const after = await app.read()
+  assert.deepEqual(after.marketplace, before.marketplace)
+  assert.deepEqual(after.receipts, before.receipts)
+  assert.deepEqual(after.auth.accounts, before.auth.accounts)
+})
+
+test('administrator sessions survive restarts while revoked, expired and invalid sessions fail verification', async (t) => {
+  const app = await fixture(t)
+  const credentials = { role: 'admin', username: 'admin', password: '123' }
+  const admin = (await app.call('auth/login', credentials)).session
+  await app.restart()
+  assert.deepEqual((await app.call('auth/session', undefined, admin)).session, admin)
+  assert.equal((await app.call('auth/session')).status, 401)
+  assert.equal(
+    (await app.call('auth/session', undefined, { role: 'admin', token: 'fake-token' })).status,
+    401,
+  )
+  await app.call('auth/logout', {}, admin)
+  assert.equal((await app.call('auth/session', undefined, admin)).status, 401)
+  const expired = (await app.call('auth/login', credentials)).session
+  const saved = await app.read()
+  saved.auth.sessions[expired.token].expiresAt = Date.now() - 1
+  await app.write(saved)
+  await app.restart()
+  assert.equal((await app.call('auth/session', undefined, expired)).status, 401)
+})
+
+test('existing stores gain a single administrator without changing accounts, sessions, orders or retry receipts', async (t) => {
+  const app = await fixture(t)
+  const user = (await app.register('13800000021')).session
+  const operationId = randomUUID()
+  const paid = await app.call('commands', checkout, user, { 'X-Idempotency-Key': operationId })
+  const existing = await app.read()
+  existing.auth.accounts = existing.auth.accounts.filter((account) => account.id !== 'demo-admin')
+  await app.write(existing)
+  await app.restart()
+  const upgraded = await app.read()
+  assert.deepEqual(upgraded.marketplace, existing.marketplace)
+  assert.deepEqual(upgraded.receipts, existing.receipts)
+  assert.deepEqual(upgraded.auth.sessions, existing.auth.sessions)
+  assert.deepEqual(
+    upgraded.auth.accounts.filter((account) => account.id !== 'demo-admin'),
+    existing.auth.accounts,
+  )
+  assert.equal(
+    (await app.call('auth/login', { role: 'admin', username: 'admin', password: '123' })).status,
+    200,
+  )
+  const admin = (await app.read()).auth.accounts.find((account) => account.id === 'demo-admin')
+  await app.restart()
+  const restarted = await app.read()
+  assert.equal(restarted.auth.accounts.filter((account) => account.id === 'demo-admin').length, 1)
+  assert.deepEqual(
+    restarted.auth.accounts.find((account) => account.id === 'demo-admin'),
+    admin,
+  )
+  const retry = await app.call('commands', checkout, user, { 'X-Idempotency-Key': operationId })
+  assert.deepEqual(retry.orderIds, paid.orderIds)
+  assert.equal(retry.state.orders.length, 1)
+  assert.equal(retry.state.products[0].stock, 35)
 })

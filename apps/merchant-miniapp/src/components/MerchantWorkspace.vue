@@ -18,11 +18,23 @@ import {
   resetDemoState,
   shipDemoOrder,
   toggleDemoProduct,
+  submitShopReview,
   type DemoOrder,
   type DemoProduct,
 } from '@starisle/shared/demo'
 
 const { state, sync, syncError, connected, syncing } = useDemoSync('merchant')
+const canSell = computed(
+  () =>
+    (!state.value.shop.status || state.value.shop.status === 'ACTIVE') &&
+    !state.value.shop.ownerDisabled,
+)
+const shopStatus = computed(
+  () =>
+    ({ PENDING: '待审核', REJECTED: '审核未通过', SUSPENDED: '店铺已暂停', ACTIVE: '营业中' })[
+      state.value.shop.status || 'ACTIVE'
+    ],
+)
 const busy = ref(false)
 const tab = ref('home')
 const status = ref('待发货')
@@ -58,7 +70,11 @@ const completed = computed(
 const revenue = computed(() =>
   state.value.merchantOrders.reduce((sum, order) => sum + order.amount, 0),
 )
-const published = computed(() => state.value.products.filter((product) => product.published).length)
+const published = computed(() =>
+  canSell.value
+    ? state.value.products.filter((product) => product.published && !product.adminHidden).length
+    : 0,
+)
 const visibleOrders = computed(() =>
   state.value.merchantOrders.filter(
     (order) => status.value === '全部' || order.status === status.value,
@@ -109,6 +125,10 @@ async function ship() {
   }
 }
 function editProduct(product?: DemoProduct) {
+  if (!canSell.value) {
+    uni.showToast({ title: '店铺通过审核并恢复营业后才能管理商品', icon: 'none' })
+    return
+  }
   productId.value = product?.id || ''
   productTitle.value = product?.title || ''
   productPrice.value = product ? (product.price / 100).toFixed(2) : ''
@@ -117,6 +137,21 @@ function editProduct(product?: DemoProduct) {
   productCover.value = product?.cover || DEMO_ASSETS.figurine
   error.value = ''
   sheet.value = 'product'
+}
+async function resubmitReview() {
+  if (busy.value) return
+  busy.value = true
+  try {
+    state.value = await submitShopReview()
+    uni.showToast({ title: '申请已重新提交', icon: 'success' })
+  } catch (cause) {
+    uni.showToast({
+      title: cause instanceof Error ? cause.message : '提交失败，请重试',
+      icon: 'none',
+    })
+  } finally {
+    busy.value = false
+  }
 }
 async function saveProduct() {
   if (busy.value) return
@@ -210,6 +245,23 @@ async function toggleProduct(id: string) {
   <view class="app-screen merchant-screen">
     <AppHeader :title="title" badge @message="sheet = 'message'" />
     <SyncStatus :connected="connected" :syncing="syncing" :error="syncError" @retry="sync" />
+    <view v-if="!canSell" class="review-notice" data-testid="merchant-review-notice">
+      <text class="review-title" data-testid="merchant-shop-status">{{ shopStatus }}</text>
+      <text>{{ state.shop.reason || '申请已提交，管理员审核通过后即可上架商品。' }}</text>
+      <view v-if="state.shop.status === 'REJECTED'" class="review-actions">
+        <button class="secondary-button" data-testid="merchant-review-edit" @click="openShop">
+          修改店铺资料
+        </button>
+        <button
+          class="secondary-button"
+          :disabled="busy"
+          data-testid="merchant-review-resubmit"
+          @click="resubmitReview"
+        >
+          重新提交审核
+        </button>
+      </view>
+    </view>
     <view class="workspace-body">
       <template v-if="tab === 'home'">
         <view class="shop-banner">
@@ -221,12 +273,12 @@ async function toggleProduct(id: string) {
                 <text>{{ state.shop.name }}</text>
                 <view class="open-badge">
                   <view />
-                  营业中
+                  {{ shopStatus }}
                 </view>
               </view>
               <text class="shop-tagline">{{ state.shop.description }}</text>
               <view class="shop-identity">
-                星屿认证商家
+                {{ canSell ? '星屿认证商家' : '商家入驻申请' }}
                 <Icon name="shield" tone="orange" :size="11" />
               </view>
             </view>
@@ -280,7 +332,7 @@ async function toggleProduct(id: string) {
             <text>商品管理</text>
             <text class="quick-action-note">打理每一份心意</text>
           </button>
-          <button @click="editProduct()" data-testid="publish-product">
+          <button @click="editProduct()" :disabled="!canSell || busy" data-testid="publish-product">
             <view class="quick-action-icon mint"><Icon name="plus" tone="teal" :size="24" /></view>
             <text>发布新品</text>
             <text class="quick-action-note">让新灵感上岛</text>
@@ -418,14 +470,25 @@ async function toggleProduct(id: string) {
               </text>
               <text class="managed-product-price">¥{{ money(product.price) }}</text>
             </view>
-            <text class="publication-status" :class="{ off: !product.published }">
-              {{ product.published ? '在售' : '已下架' }}
+            <text
+              class="publication-status"
+              :class="{ off: !product.published || product.adminHidden || !canSell }"
+            >
+              {{
+                product.adminHidden
+                  ? '管理员下架'
+                  : !canSell
+                    ? '暂停展示'
+                    : product.published
+                      ? '在售'
+                      : '已下架'
+              }}
             </text>
           </view>
           <view class="managed-product-actions">
             <button
               @click="toggleProduct(product.id)"
-              :disabled="busy"
+              :disabled="busy || !canSell || product.adminHidden"
               :data-testid="`toggle-${product.id}`"
             >
               {{ product.published ? '下架' : '上架' }}
@@ -438,6 +501,9 @@ async function toggleProduct(id: string) {
               编辑商品
             </button>
           </view>
+          <text v-if="product.adminReason" class="product-admin-reason">
+            处理原因：{{ product.adminReason }}
+          </text>
         </view>
       </view>
       <view v-if="tab === 'profile'" class="merchant-profile">
@@ -606,9 +672,21 @@ async function toggleProduct(id: string) {
     </Sheet>
     <Sheet :visible="sheet === 'shop'" title="打理你的小店" @close="sheet = ''">
       <text class="form-label">店铺名称</text>
-      <input v-model="shopName" class="form-input" maxlength="20" aria-label="店铺名称" />
+      <input
+        v-model="shopName"
+        class="form-input"
+        maxlength="20"
+        aria-label="店铺名称"
+        data-testid="edit-shop-name"
+      />
       <text class="form-label">一句话介绍</text>
-      <input v-model="shopDescription" class="form-input" maxlength="50" aria-label="店铺介绍" />
+      <input
+        v-model="shopDescription"
+        class="form-input"
+        maxlength="50"
+        aria-label="店铺介绍"
+        data-testid="edit-shop-description"
+      />
       <text v-if="error" class="form-error">{{ error }}</text>
       <text class="form-note">把小店的独特之处，介绍给每一位同好。</text>
       <button
@@ -616,6 +694,7 @@ async function toggleProduct(id: string) {
         :disabled="busy"
         :loading="busy"
         @click="saveShop"
+        data-testid="save-shop"
       >
         保存店铺资料
       </button>
@@ -641,6 +720,35 @@ async function toggleProduct(id: string) {
 </template>
 
 <style scoped>
+.review-notice {
+  margin: 14px 20px 0;
+  padding: 15px;
+  background: #fff1df;
+  color: #8b6748;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.review-notice > text {
+  display: block;
+}
+.review-title {
+  font-size: 15px;
+  font-weight: 650;
+  margin-bottom: 5px;
+}
+.review-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.product-admin-reason {
+  display: block;
+  color: #a33f62;
+  font-size: 12px;
+  line-height: 1.8;
+  margin-top: 12px;
+}
 .merchant-screen {
   background: #faf8f6;
 }

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "exports": {
+    "./AdminWorkspace.vue": "./src/AdminWorkspace.vue",
     "./AuthScreen.vue": "./src/AuthScreen.vue",
     "./Icon.vue": "./src/Icon.vue",
     "./AppHeader.vue": "./src/AppHeader.vue",

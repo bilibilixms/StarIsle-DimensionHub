@@ -13,6 +13,12 @@
       }
     },
     {
+      "path": "pages/admin/index",
+      "style": {
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/merchant/index",
       "style": {
         "navigationStyle": "custom"
