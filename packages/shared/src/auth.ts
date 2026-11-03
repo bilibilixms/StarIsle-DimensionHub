@@ -1,5 +1,7 @@
 export type AuthRole = 'user' | 'merchant' | 'admin'
 import { DEMO_MERCHANT_VERIFICATION_CODE } from './demo-domain'
+import { ADMIN_UI_ENABLED } from './features'
+export { ADMIN_UI_ENABLED } from './features'
 export { DEMO_MERCHANT_VERIFICATION_CODE } from './demo-domain'
 export interface DemoSession {
   token: string
@@ -21,7 +23,11 @@ export const demoApiBase = (
 ).replace(/\/$/, '')
 export function getDemoSession(): DemoSession | undefined {
   const session = uni.getStorageSync(sessionKey) as DemoSession | undefined
-  return session?.token && session.expiresAt > Date.now() ? session : undefined
+  return session?.token &&
+    session.expiresAt > Date.now() &&
+    (ADMIN_UI_ENABLED || session.role !== 'admin')
+    ? session
+    : undefined
 }
 export function clearDemoSession() {
   uni.removeStorageSync(sessionKey)
@@ -31,7 +37,8 @@ export function isGuest(): boolean {
   return !getDemoSession() && uni.getStorageSync(guestKey) === true
 }
 function safeDestination(url: string, role: AuthRole): string {
-  if (role === 'admin') return '/pages/admin/index'
+  if (role === 'admin')
+    return ADMIN_UI_ENABLED ? '/pages/admin/index' : '/pages/auth/index?role=user'
   if (role === 'merchant') return '/pages/merchant/index'
   return /^\/pages\/(index\/index|product\/detail|order\/detail|shop\/detail|checkout\/index|address\/index)(\?|$)/.test(
     url,
@@ -40,6 +47,7 @@ function safeDestination(url: string, role: AuthRole): string {
     : '/pages/index/index'
 }
 export function openLogin(role: AuthRole = 'user', destination = '') {
+  if (role === 'admin' && !ADMIN_UI_ENABLED) role = 'user'
   uni.reLaunch({
     url: `/pages/auth/index?role=${role}&next=${encodeURIComponent(safeDestination(destination, role))}`,
   })
@@ -113,6 +121,7 @@ export async function submitDemoAuth(
   shopName = '',
   qualificationCode = '',
 ) {
+  if (role === 'admin' && !ADMIN_UI_ENABLED) throw new Error('该身份暂未开放')
   if (role === 'admin' && action === 'register') throw new Error('管理员不开放注册')
   validateDemoCredentials(phone, password, role)
   if (action === 'register' && role === 'merchant') {

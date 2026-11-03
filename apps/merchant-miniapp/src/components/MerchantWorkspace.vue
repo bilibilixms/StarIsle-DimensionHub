@@ -247,7 +247,7 @@ async function toggleProduct(id: string) {
     <SyncStatus :connected="connected" :syncing="syncing" :error="syncError" @retry="sync" />
     <view v-if="!canSell" class="review-notice" data-testid="merchant-review-notice">
       <text class="review-title" data-testid="merchant-shop-status">{{ shopStatus }}</text>
-      <text>{{ state.shop.reason || '申请已提交，管理员审核通过后即可上架商品。' }}</text>
+      <text>{{ state.shop.reason || '申请已提交，平台审核通过后即可上架商品。' }}</text>
       <view v-if="state.shop.status === 'REJECTED'" class="review-actions">
         <button class="secondary-button" data-testid="merchant-review-edit" @click="openShop">
           修改店铺资料
@@ -476,7 +476,7 @@ async function toggleProduct(id: string) {
             >
               {{
                 product.adminHidden
-                  ? '管理员下架'
+                  ? '平台下架'
                   : !canSell
                     ? '暂停展示'
                     : product.published

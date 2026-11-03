@@ -348,7 +348,7 @@ export function applyDemoCommand(
     const product = state.products.find((product) => product.id === command.id)
     if (!product) throw new DemoDomainError('商品不存在', 404)
     if (!owns(product)) throw new DemoDomainError('只能编辑本店商品', 403)
-    if (product.adminHidden) throw new DemoDomainError('商品已由管理员下架，请查看处理原因', 403)
+    if (product.adminHidden) throw new DemoDomainError('商品已由平台下架，请查看处理原因', 403)
     product.published = !product.published
     product.managementVersion = (product.managementVersion || 0) + 1
   } else if (command.type === 'editShop') {
@@ -372,7 +372,7 @@ export function applyDemoCommand(
     state.shops = marketplaceShops(state)
   } else if (command.type === 'reset') {
     if (state.products.some((product) => owns(product) && product.adminHidden))
-      throw new DemoDomainError('本店有管理员下架商品，恢复展示后才能重置演示数据', 403)
+      throw new DemoDomainError('本店有平台下架商品，恢复展示后才能重置演示数据', 403)
     const versions = new Map(
       state.products.filter(owns).map((product) => [product.id, product.managementVersion || 0]),
     )

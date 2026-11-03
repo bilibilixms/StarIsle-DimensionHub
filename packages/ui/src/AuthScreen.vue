@@ -8,6 +8,7 @@ import {
   browseAsGuest,
   validateDemoCredentials,
   DEMO_MERCHANT_VERIFICATION_CODE,
+  ADMIN_UI_ENABLED,
   type AuthRole,
 } from '@starisle/shared/auth'
 
@@ -23,7 +24,7 @@ const visiblePassword = ref(false)
 const busy = ref(false)
 const error = ref('')
 const merchant = computed(() => role.value === 'merchant')
-const admin = computed(() => role.value === 'admin')
+const admin = computed(() => ADMIN_UI_ENABLED && role.value === 'admin')
 const available = computed(() => role.value === 'user' || merchant.value || admin.value)
 const verifying = computed(
   () => merchant.value && mode.value === 'register' && qualificationStep.value,
@@ -35,12 +36,12 @@ const roles = [
   { key: 'artist', name: '画师', copy: '暂未开放', icon: 'brush', tone: 'muted' },
   { key: 'event', name: '漫展方', copy: '暂未开放', icon: 'ticket', tone: 'muted' },
   { key: 'admin', name: '管理员', copy: '管理星屿平台', icon: 'shield', tone: 'purple' },
-]
+].filter((item) => ADMIN_UI_ENABLED || item.key !== 'admin')
 watch(
   () => props.initialRole,
   (value) => {
-    role.value = value
-    if (value === 'admin') mode.value = 'login'
+    role.value = value === 'admin' && !ADMIN_UI_ENABLED ? 'user' : value
+    if (role.value === 'admin') mode.value = 'login'
   },
   { immediate: true },
 )
@@ -221,7 +222,7 @@ async function submit() {
       <view v-else class="qualification-panel" data-testid="merchant-qualification">
         <text class="qualification-title">商家资质验证</text>
         <text class="qualification-copy">
-          输入演示验证码后提交入驻申请，管理员审核通过后即可上架商品。
+          输入演示验证码后提交入驻申请，平台审核通过后即可上架商品。
         </text>
         <text class="qualification-account">注册手机号：{{ phone }}</text>
         <view class="qualification-demo" data-testid="merchant-demo-code">

@@ -1,6 +1,9 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { randomUUID, randomInt } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
+import { ADMIN_UI_ENABLED } from '../../packages/shared/src/features'
+
+test.skip(!ADMIN_UI_ENABLED, '管理员界面暂时隐藏，后续启用时恢复验收')
 const api = 'http://127.0.0.1:8787/api/demo'
 const root = 'http://127.0.0.1:4173/#/'
 type Session = { token: string; role: string; account: { id: string; shopId?: string } }
