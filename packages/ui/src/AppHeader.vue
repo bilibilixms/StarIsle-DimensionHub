@@ -1,22 +1,32 @@
 <script setup lang="ts">
 import Icon from './Icon.vue'
 withDefaults(
-  defineProps<{ title?: string; subtitle?: string; back?: boolean; badge?: boolean }>(),
-  { title: '星屿', subtitle: '', back: false, badge: false },
+  defineProps<{
+    title?: string
+    subtitle?: string
+    back?: boolean
+    badge?: boolean
+    compact?: boolean
+  }>(),
+  { title: '星屿', subtitle: '', back: false, badge: false, compact: false },
 )
 defineEmits<{ back: []; message: [] }>()
 const statusHeight = uni.getSystemInfoSync().statusBarHeight || 0
 </script>
 
 <template>
-  <view class="header" :style="{ paddingTop: `${statusHeight}px` }">
+  <view
+    class="header"
+    :class="{ 'compact-header': compact }"
+    :style="{ paddingTop: `${statusHeight}px` }"
+  >
     <view class="header-content">
       <button v-if="back" class="icon-button back" aria-label="返回" @click="$emit('back')">
         <Icon name="chevron-left" tone="ink" />
       </button>
       <view class="identity">
         <view class="brand-line">
-          <Icon v-if="!back" name="sparkles" tone="purple" :size="25" />
+          <Icon v-if="!back" name="sparkles" tone="purple" :size="compact ? 21 : 25" />
           <text :class="back || title !== '星屿' ? 'page-title' : 'wordmark'">{{ title }}</text>
         </view>
         <text v-if="subtitle" class="subtitle">{{ subtitle }}</text>
@@ -96,6 +106,29 @@ const statusHeight = uni.getSystemInfoSync().statusBarHeight || 0
 }
 .back {
   margin-left: -9px !important;
+}
+.compact-header {
+  background: #fff;
+}
+.compact-header .header-content {
+  height: 54px;
+  padding: 0 16px;
+}
+.compact-header .identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.compact-header .wordmark {
+  color: #6541a5;
+  font-size: 24px;
+  letter-spacing: 1px;
+}
+.compact-header .subtitle {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0;
+  color: #81768e;
 }
 /* Reserve the native capsule area in Weixin. */
 /* #ifdef MP-WEIXIN */

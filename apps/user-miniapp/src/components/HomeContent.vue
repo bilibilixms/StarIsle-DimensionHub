@@ -8,6 +8,7 @@ import { DEMO_ASSETS, productShopId, type DemoState } from '@starisle/shared/dem
 const props = defineProps<{ state: DemoState; discover: boolean }>()
 const emit = defineEmits<{ refresh: [] }>()
 const category = ref('推荐')
+const priceOrder = ref<'default' | 'asc' | 'desc'>('default')
 const keyword = ref('')
 const query = computed(() => keyword.value.trim().toLowerCase())
 const shops = computed(() =>
@@ -25,9 +26,9 @@ const info = ref<'artist' | 'event' | ''>('')
 const followed = ref(false)
 const categories = [
   { label: '周边商城', key: '周边', icon: 'bag', tone: 'pink' },
-  { label: '发现画师', key: '画作', icon: 'brush', tone: 'purple' },
+  { label: '收藏画作', key: '画作', icon: 'brush', tone: 'purple' },
   { label: '漫展活动', key: '漫展', icon: 'ticket', tone: 'blue' },
-  { label: '同好灵感', key: '推荐', icon: 'sparkles', tone: 'orange' },
+  { label: '为你推荐', key: '推荐', icon: 'sparkles', tone: 'orange' },
 ]
 watch(
   () => props.discover,
@@ -36,7 +37,7 @@ watch(
   },
   { immediate: true },
 )
-const products = computed(() =>
+const filteredProducts = computed(() =>
   props.state.products.filter(
     (product) =>
       product.published &&
@@ -49,6 +50,17 @@ const products = computed(() =>
         matchingShopIds.value.has(productShopId(product))),
   ),
 )
+const products = computed(() =>
+  priceOrder.value === 'default'
+    ? filteredProducts.value
+    : [...filteredProducts.value].sort((a, b) =>
+        priceOrder.value === 'asc' ? a.price - b.price : b.price - a.price,
+      ),
+)
+function sortByPrice() {
+  priceOrder.value =
+    priceOrder.value === 'default' ? 'asc' : priceOrder.value === 'asc' ? 'desc' : 'default'
+}
 function openShop(id: string) {
   uni.navigateTo({ url: `/pages/shop/detail?id=${encodeURIComponent(id)}` })
 }
@@ -56,20 +68,36 @@ function openShop(id: string) {
 
 <template>
   <view class="home-content">
-    <view class="search-box">
-      <Icon name="search" :size="17" />
-      <input
-        v-model="keyword"
-        placeholder="搜索商品或商家"
-        confirm-type="search"
-        maxlength="60"
-        aria-label="搜索商品或商家"
-        data-testid="product-search"
-      />
-      <button v-if="keyword" class="clear-search" aria-label="清空搜索" @click="keyword = ''">
-        ×
+    <view class="search-panel">
+      <view class="search-box">
+        <Icon name="search" tone="purple" :size="19" />
+        <input
+          v-model="keyword"
+          placeholder="搜索商品或商家"
+          confirm-type="search"
+          maxlength="60"
+          aria-label="搜索商品或商家"
+          data-testid="product-search"
+        />
+        <button v-if="keyword" class="clear-search" aria-label="清空搜索" @click="keyword = ''">
+          ×
+        </button>
+        <text v-else class="search-note">商品 / 店铺</text>
+      </view>
+    </view>
+    <view v-if="!query" class="category-grid">
+      <button
+        v-for="item in categories"
+        :key="item.key"
+        class="category-item"
+        :class="{ 'category-active': category === item.key }"
+        @click="category = item.key"
+      >
+        <view class="category-icon" :class="item.tone">
+          <Icon :name="item.icon" :tone="item.tone" :size="24" />
+        </view>
+        <text>{{ item.label }}</text>
       </button>
-      <text v-else class="search-note">发现热爱</text>
     </view>
     <view v-if="shops.length" class="shop-results" data-testid="shop-results">
       <view class="section-heading">
@@ -100,37 +128,17 @@ function openShop(id: string) {
         <Icon name="chevron-right" tone="purple" :size="17" />
       </button>
     </view>
-    <view v-if="!discover && !query" class="hero" data-testid="home-hero">
+    <view v-if="!discover && !query && category === '推荐'" class="hero" data-testid="home-hero">
       <image class="hero-art" :src="DEMO_ASSETS.hero" mode="aspectFill" />
-      <view class="hero-shade" />
       <view class="hero-content">
-        <text class="hero-label">给热爱，一座小岛</text>
-        <text class="hero-title">{{ '每一份心动\n都值得被收藏' }}</text>
-        <text class="hero-description">遇见周边、创作与同频的你</text>
+        <text class="hero-label">星屿灵感选集</text>
+        <text class="hero-title">把喜欢，带回小岛</text>
+        <text class="hero-description">周边、画作，和日常里的小小收藏</text>
         <button class="hero-button" @click="category = '周边'">
-          <text>开启今日探索</text>
-          <Icon name="arrow" tone="purple" :size="14" />
+          <text>逛逛周边</text>
+          <Icon name="chevron-right" tone="purple" :size="12" />
         </button>
       </view>
-      <view class="hero-dots">
-        <view class="hero-dot current" />
-        <view class="hero-dot" />
-        <view class="hero-dot" />
-      </view>
-      <text class="hero-corner">原创好物 · 灵感相遇</text>
-    </view>
-    <view v-if="!query" class="category-grid">
-      <button
-        v-for="item in categories"
-        :key="item.key"
-        class="category-item"
-        @click="category = item.key"
-      >
-        <view class="category-icon" :class="item.tone">
-          <Icon :name="item.icon" :tone="item.tone" :size="25" />
-        </view>
-        <text>{{ item.label }}</text>
-      </button>
     </view>
     <view v-if="!query" class="discovery-tabs">
       <button
@@ -143,17 +151,39 @@ function openShop(id: string) {
         <text>{{ item }}</text>
         <view v-if="category === item" class="tab-stroke" />
       </button>
-      <text class="discovery-tip">找到你的同频</text>
     </view>
     <view v-if="query || category !== '漫展'" class="recommendation">
       <view class="section-heading">
         <view class="section-heading-title">
-          <view class="section-spark">✦</view>
-          <text>{{ query ? '搜索结果' : category === '画作' ? '灵感收藏夹' : '为你心动' }}</text>
+          <text>
+            {{
+              query
+                ? '搜索结果'
+                : category === '画作'
+                  ? '收藏画作'
+                  : category === '周边'
+                    ? '周边好物'
+                    : '为你推荐'
+            }}
+          </text>
+          <text class="product-count">{{ products.length }} 件好物</text>
         </view>
-        <text class="recommendation-note">
-          {{ query ? `${products.length} 件好物` : '让喜欢，有迹可循' }}
-        </text>
+        <button
+          class="price-sort"
+          :class="{ 'sort-active': priceOrder !== 'default' }"
+          :aria-label="
+            priceOrder === 'default'
+              ? '按价格从低到高排序'
+              : priceOrder === 'asc'
+                ? '按价格从高到低排序'
+                : '恢复默认排序'
+          "
+          data-testid="price-sort"
+          @click="sortByPrice"
+        >
+          价格
+          <text>{{ priceOrder === 'asc' ? '↑' : priceOrder === 'desc' ? '↓' : '↕' }}</text>
+        </button>
       </view>
       <ProductGrid
         v-if="products.length"
@@ -191,7 +221,7 @@ function openShop(id: string) {
         </view>
       </view>
     </view>
-    <view v-if="!query" class="artist-strip" @click="info = 'artist'">
+    <view v-if="!query && category === '画作'" class="artist-strip" @click="info = 'artist'">
       <image :src="DEMO_ASSETS.hero" class="artist-avatar" mode="aspectFill" />
       <view class="artist-strip-copy">
         <text>和创作者一起，把梦画下来</text>
@@ -233,29 +263,250 @@ function openShop(id: string) {
 
 <style scoped>
 .home-content {
-  padding: 0 20px;
+  padding: 0;
+}
+.search-panel {
+  padding: 2px 16px 0;
+  background: #fff;
+}
+.search-box {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px;
+  background: #f4f1f8;
+  border: 1px solid #e9e2f2;
+  border-radius: 12px;
+}
+.search-box input {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  font-size: 13px;
+  color: #42364f;
+}
+.search-note {
+  padding-left: 10px;
+  border-left: 1px solid #ddd5e8;
+  color: #85778f;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.clear-search {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 36px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: #766880;
+  font-size: 22px;
+  line-height: 1;
+}
+.category-grid {
+  display: flex;
+  justify-content: space-between;
+  padding: 15px 18px 18px;
+  background: #fff;
+}
+.category-item {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: #655a71;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.category-active {
+  color: #6541a5;
+  font-weight: 650;
+}
+.category-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 16px;
+}
+.category-icon.pink {
+  background: #fff0f4;
+}
+.category-icon.purple {
+  background: #f1eafa;
+}
+.category-icon.blue {
+  background: #edf3ff;
+}
+.category-icon.orange {
+  background: #fff3e8;
+}
+.hero {
+  position: relative;
+  height: 128px;
+  margin: 12px 16px 2px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #eee6f7;
+}
+.hero-art {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 40%;
+  height: 100%;
+  border-radius: 70px 0 0 70px;
+}
+.hero-content {
+  position: relative;
+  width: 66%;
+  padding: 15px 0 0 16px;
+}
+.hero-label {
+  display: block;
+  color: #7c619b;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.hero-title {
+  display: block;
+  margin-top: 6px;
+  color: #4e326d;
+  font-size: 19px;
+  font-weight: 750;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.hero-description {
+  display: block;
+  margin-top: 5px;
+  color: #7d668e;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.hero-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0;
+  margin: 7px 0 0;
+  background: transparent;
+  color: #6541a5;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.discovery-tabs {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+  height: 49px;
+  padding: 0 16px;
+  margin: 0;
+  background: #fff;
+  border-bottom: 1px solid #eeeaf3;
+}
+.hero + .discovery-tabs {
+  margin-top: 12px;
+}
+.discovery-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 2px;
+  margin: 0;
+  background: transparent;
+  color: #81768b;
+  font-size: 14px;
+  line-height: 1.4;
+  border-radius: 0;
+}
+.discovery-tab.selected {
+  color: #4e326d;
+  font-weight: 750;
+}
+.tab-stroke {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  width: 18px;
+  height: 3px;
+  margin-left: -9px;
+  border-radius: 2px;
+  background: #8056cf;
+}
+.recommendation {
+  padding: 14px 12px 0;
+}
+.section-heading {
+  margin-bottom: 12px;
+}
+.section-heading-title {
+  gap: 9px;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+.product-count {
+  color: #85798f;
+  font-size: 10px;
+  font-weight: 400;
+}
+.price-sort {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 0 6px;
+  margin: -3px 0;
+  background: transparent;
+  color: #81768b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.price-sort text {
+  font-size: 15px;
+}
+.price-sort.sort-active {
+  color: #6541a5;
+  font-weight: 600;
+}
+.recommendation-note {
+  color: #81768b;
+  font-size: 11px;
 }
 .shop-results {
-  margin-bottom: 25px;
+  padding: 18px 16px 4px;
+  background: #fff;
 }
 .search-shop {
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
-  padding: 14px;
+  padding: 12px;
   margin: 0 0 10px;
   text-align: left;
-  background: #fff;
+  background: #faf8fd;
   border: 1px solid #ece5f3;
-  border-radius: 14px;
+  border-radius: 12px;
   line-height: 1.5;
 }
 .search-shop-avatar {
-  width: 56px;
-  height: 56px;
-  border-radius: 12px;
   flex-shrink: 0;
+  width: 54px;
+  height: 54px;
+  border-radius: 10px;
 }
 .search-shop-copy {
   flex: 1;
@@ -264,254 +515,56 @@ function openShop(id: string) {
 .search-shop-name {
   display: block;
   font-size: 14px;
-  font-weight: 600;
-  color: #544064;
+  font-weight: 650;
+  color: #44334f;
   word-break: break-all;
 }
 .search-shop-description {
   display: block;
-  font-size: 11px;
-  color: #9989a8;
   margin-top: 4px;
   overflow: hidden;
+  color: #81768b;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .search-shop-count {
   display: block;
+  margin-top: 4px;
+  color: #765a96;
   font-size: 10px;
-  color: #b09bc4;
-  margin-top: 5px;
 }
 .shop-search-note {
   display: block;
   padding: 20px 0;
   font-size: 12px;
-  color: #9989a8;
+  color: #81768b;
   line-height: 1.8;
-}
-.search-box {
-  height: 41px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  background: #efecf6;
-  border-radius: 12px;
-  padding: 0 12px;
-  margin: 4px 0 18px;
-}
-.search-box input {
-  flex: 1;
-  min-width: 0;
-  font-size: 11px;
-  color: #716580;
-  height: 40px;
-}
-.search-note {
-  font-size: 9px;
-  white-space: nowrap;
-  color: #aaa0b7;
-  border-left: 1px solid #dbd4e8;
-  padding-left: 10px;
-}
-.clear-search {
-  background: transparent;
-  color: #91839f;
-  margin: 0;
-  padding: 0 3px;
-  line-height: 28px;
-  font-size: 20px;
-}
-.hero {
-  position: relative;
-  height: 176px;
-  overflow: hidden;
-  border-radius: 18px;
-  background: #e6daf5;
-}
-.hero-art {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-}
-.hero-shade {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    90deg,
-    rgba(245, 233, 255, 0.95) 0%,
-    rgba(238, 221, 255, 0.65) 38%,
-    transparent 68%
-  );
-}
-.hero-content {
-  position: relative;
-  padding: 19px 0 0 19px;
-}
-.hero-label {
-  display: block;
-  color: #8263a7;
-  font-size: 10px;
-  font-weight: 550;
-  letter-spacing: 1px;
-}
-.hero-title {
-  display: block;
-  color: #54317f;
-  font-size: 25px;
-  line-height: 1.42;
-  white-space: pre-line;
-  font-weight: 850;
-  margin-top: 7px;
-  letter-spacing: 0.5px;
-}
-.hero-description {
-  display: block;
-  color: #80649b;
-  font-size: 9px;
-  margin-top: 7px;
-}
-.hero-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  padding: 7px 11px;
-  margin: 12px 0 0;
-  background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  border-radius: 20px;
-  font-size: 10px;
-  color: #8053b2;
-  line-height: 1;
-}
-.hero-dots {
-  position: absolute;
-  bottom: 10px;
-  right: 15px;
-  display: flex;
-  gap: 4px;
-}
-.hero-dot {
-  width: 4px;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.6);
-  border-radius: 4px;
-}
-.hero-dot.current {
-  width: 13px;
-  background: white;
-}
-.hero-corner {
-  display: none;
-}
-.category-grid {
-  display: flex;
-  justify-content: space-around;
-  margin: 18px -3px 18px;
-}
-.category-item {
-  background: transparent;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  flex-direction: column;
-  gap: 8px;
-  font-size: 11px;
-  color: #71637f;
-  line-height: 1.4;
-}
-.category-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 17px;
-}
-.category-icon.pink {
-  background: #ffe7ef;
-}
-.category-icon.purple {
-  background: #efe6ff;
-}
-.category-icon.blue {
-  background: #e5efff;
-}
-.category-icon.orange {
-  background: #fff0df;
-}
-.discovery-tabs {
-  display: flex;
-  align-items: center;
-  gap: 25px;
-  border-bottom: 1px solid #eeebf3;
-  padding-bottom: 14px;
-  margin-bottom: 18px;
-}
-.discovery-tab {
-  position: relative;
-  padding: 1px 0;
-  font-size: 14px;
-  line-height: 1.3;
-  margin: 0;
-  background: transparent;
-  color: #9b91a7;
-  border-radius: 0;
-}
-.discovery-tab.selected {
-  color: #7850b8;
-  font-weight: 750;
-}
-.tab-stroke {
-  position: absolute;
-  left: 1px;
-  right: 1px;
-  height: 3px;
-  background: #a47ce2;
-  border-radius: 3px;
-  bottom: -14px;
-}
-.discovery-tip {
-  flex: 1;
-  text-align: right;
-  font-size: 9px;
-  color: #b7acbf;
-}
-.section-spark {
-  color: #b99ae7;
-  font-size: 20px;
-}
-.recommendation-note {
-  font-size: 10px;
-  color: #92839f;
 }
 .artist-strip {
   display: flex;
   align-items: center;
   gap: 11px;
-  background: #f0eaf8;
-  border: 1px solid #e9e0f2;
-  border-radius: 12px;
-  margin-top: 22px;
+  margin: 20px 16px 0;
   padding: 12px;
+  background: #f0eaf8;
+  border-radius: 12px;
 }
 .artist-avatar {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
-  object-position: 85% center;
 }
 .artist-strip-copy {
   flex: 1;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 550;
 }
 .artist-strip-note {
   display: block;
-  color: #aa99bd;
-  font-size: 9px;
   margin-top: 5px;
+  color: #81768b;
+  font-size: 10px;
   font-weight: 400;
 }
 .island-footer {
@@ -519,60 +572,64 @@ function openShop(id: string) {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  margin: 28px 0 2px;
-  color: #bfb2cd;
-  font-size: 9px;
+  margin: 28px 12px 0;
+  color: #96889f;
+  font-size: 10px;
 }
 .island-footer view {
   width: 18px;
   height: 1px;
   background: #ded5e8;
 }
+.events-section {
+  padding: 18px 16px 0;
+}
 .event-card {
   display: flex;
-  background: white;
   overflow: hidden;
-  border-radius: 15px;
+  background: #fff;
+  border-radius: 12px;
   border: 1px solid #eee7f6;
 }
 .event-cover {
-  width: 42%;
-  height: 175px;
-  object-position: 80% center;
+  flex-shrink: 0;
+  width: 40%;
+  height: 180px;
 }
 .event-copy {
   flex: 1;
-  padding: 18px 13px;
+  min-width: 0;
+  padding: 18px 12px;
 }
 .event-badge {
-  color: #9b7cc8;
-  font-size: 9px;
+  color: #765a96;
+  font-size: 10px;
 }
 .event-name {
   display: block;
+  margin: 10px 0;
   font-size: 16px;
   font-weight: 700;
-  margin: 10px 0;
 }
 .event-date {
-  color: #9176b6;
+  color: #765a96;
   font-size: 13px;
 }
 .event-description {
   display: block;
-  font-size: 8px;
-  color: #afa2bb;
   margin: 12px 0;
+  color: #81768b;
+  font-size: 10px;
   line-height: 1.6;
 }
 .event-action {
-  color: #8b5cf6;
-  font-size: 11px;
+  color: #6541a5;
+  font-size: 12px;
 }
 .feature-image {
   width: 100%;
   height: 170px;
-  border-radius: 14px;
+  border-radius: 12px;
 }
 .feature-title {
   display: block;
@@ -582,30 +639,31 @@ function openShop(id: string) {
 }
 .feature-copy {
   display: block;
-  font-size: 13px;
-  color: #9a8aa9;
-  line-height: 1.9;
   margin: 12px 0 24px;
+  color: #81768b;
+  font-size: 13px;
+  line-height: 1.9;
   white-space: pre-line;
 }
 .event-preview-note {
   display: block;
-  font-size: 12px;
-  color: #9f8eae;
   margin-bottom: 16px;
+  color: #81768b;
+  font-size: 12px;
 }
 @media (max-width: 360px) {
-  .home-content {
-    padding: 0 15px;
-  }
   .search-note {
     display: none;
   }
-  .discovery-tabs {
-    gap: 23px;
-  }
   .hero-title {
-    font-size: 23px;
+    font-size: 17px;
+  }
+  .hero-description {
+    max-width: 165px;
+    font-size: 9px;
+  }
+  .discovery-tabs {
+    gap: 26px;
   }
 }
 </style>

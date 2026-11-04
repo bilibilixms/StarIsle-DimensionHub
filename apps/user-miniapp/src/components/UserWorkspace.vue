@@ -35,11 +35,11 @@ watch(
 </script>
 
 <template>
-  <view class="app-screen">
+  <view class="app-screen" :class="{ 'storefront-screen': tab === 'home' || tab === 'discover' }">
     <AppHeader
       :title="title"
       :subtitle="tab === 'home' || tab === 'discover' ? '次元聚集地' : ''"
-      badge
+      :compact="tab === 'home' || tab === 'discover'"
       @message="messages = true"
     />
     <SyncStatus :connected="connected" :syncing="syncing" :error="syncError" @retry="sync" />
@@ -102,6 +102,17 @@ watch(
 </template>
 
 <style scoped>
+.storefront-screen {
+  background: #f7f6fa;
+}
+.storefront-screen :deep(.sync-status:not(.disconnected)) {
+  margin: 0;
+  padding: 3px 16px 8px;
+  border-radius: 0;
+  background: #fff;
+  color: #81768e;
+  font-size: 10px;
+}
 .message-item {
   display: flex;
   gap: 13px;

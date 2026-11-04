@@ -14,7 +14,6 @@ import {
   stockMessage,
   LOW_STOCK_LIMIT,
   DEMO_SHOP_ID,
-  DEMO_ASSETS,
   money,
   toggleFavorite,
   variantPrice,
@@ -148,7 +147,7 @@ function share() {
           <button class="gallery-icon" aria-label="返回" @click="back">
             <Icon name="chevron-left" tone="ink" :size="19" />
           </button>
-          <text class="gallery-category">心动收藏</text>
+          <text class="gallery-category">商品详情</text>
           <button class="gallery-icon" aria-label="分享商品" @click="share">
             <Icon name="share" tone="ink" :size="18" />
           </button>
@@ -156,7 +155,7 @@ function share() {
         <view class="gallery-bottom">
           <view class="gallery-original">
             <Icon name="sparkles" tone="white" :size="11" />
-            星屿原创
+            {{ product.category }}
           </view>
           <text class="gallery-count">1 / 1</text>
         </view>
@@ -184,19 +183,8 @@ function share() {
             {{ stockMessage(product.stock) }}
           </text>
           <view class="product-tags">
-            <text>原创设计</text>
-            <text>现货好物</text>
-            <text>用心包装</text>
-          </view>
-          <view class="promises">
-            <view>
-              <Icon name="shield" tone="purple" :size="12" />
-              <text>安心收藏</text>
-            </view>
-            <view>
-              <Icon name="truck" tone="purple" :size="13" />
-              <text>满心期待，认真送达</text>
-            </view>
+            <text>{{ product.category }}</text>
+            <text v-if="product.tag">{{ product.tag }}</text>
           </view>
         </view>
         <view class="detail-options">
@@ -208,22 +196,15 @@ function share() {
             <Icon name="chevron-right" :size="14" />
           </button>
           <view class="option-row">
-            <text class="option-label">发货</text>
-            <text class="option-content">上海 · 预计 3 天内发出</text>
-            <text class="option-small">免运费</text>
-          </view>
-          <view class="option-row">
-            <text class="option-label">服务</text>
-            <text class="option-content">精选原创 / 悉心包装 / 售后联系</text>
-            <Icon name="shield" :size="14" />
+            <text class="option-label">配送</text>
+            <text class="option-content">快递配送，下单时选择收货地址</text>
           </view>
         </view>
         <view class="shop-card">
-          <image class="shop-avatar" :src="DEMO_ASSETS.figurine" mode="aspectFill" />
+          <image class="shop-avatar" :src="product.cover" mode="aspectFill" />
           <view class="shop-copy">
             <view class="shop-name">
               <text>{{ currentShop.name }}</text>
-              <Icon name="shield" tone="purple" :size="12" />
             </view>
             <text class="shop-description">{{ currentShop.description }}</text>
           </view>
@@ -234,20 +215,31 @@ function share() {
         </view>
         <view class="description">
           <view class="description-heading">
-            <view />
-            <text>好物背后的心意</text>
-            <view />
+            <text>商品详情</text>
+          </view>
+          <view class="product-facts">
+            <view>
+              <text>商品名称</text>
+              <text>{{ product.title }}</text>
+            </view>
+            <view>
+              <text>商品分类</text>
+              <text>{{ product.category }}</text>
+            </view>
+            <view>
+              <text>包装款式</text>
+              <text>标准版 / 礼盒版</text>
+            </view>
           </view>
           <text class="description-copy">
-            {{ '星光落在指尖，热爱有了形状。\n愿这份小小的收藏，陪你度过每一个闪闪发光的日常。' }}
+            {{ product.subtitle }}
           </text>
-          <image class="description-art" :src="DEMO_ASSETS.hero" mode="aspectFill" />
+          <image class="description-art" :src="product.cover" mode="widthFix" />
           <view class="description-note">
-            <Icon name="sparkles" tone="purple" :size="16" />
-            <text>在星屿，把喜欢变成陪伴。</text>
+            <text>商品图片供展示参考，包装款式以所选规格为准。</text>
           </view>
         </view>
-        <text class="detail-demo-note">应用端样板 · 商品、价格及订单均为演示数据</text>
+        <text class="detail-demo-note">演示商品 · 模拟支付不会产生真实扣款</text>
       </view>
       <view class="purchase-bar">
         <button
@@ -295,7 +287,7 @@ function share() {
       </view>
       <Sheet
         :visible="sheet === 'add' || sheet === 'buy'"
-        :title="sheet === 'buy' ? '确认你的心动' : '选择心动好物'"
+        :title="sheet === 'buy' ? '确认商品规格' : '选择商品规格'"
         @close="sheet = ''"
       >
         <view class="sku-product">
@@ -429,15 +421,19 @@ function share() {
 
 <style scoped>
 .detail-screen {
-  background: #f8f6fb;
-  padding-bottom: calc(100px + env(safe-area-inset-bottom));
+  background: #f7f6fa;
+  padding-bottom: calc(92px + env(safe-area-inset-bottom));
 }
 .detail-gallery {
   position: relative;
-  height: 390px;
-  background: #eee0f1;
+  height: 0;
+  padding-top: 100%;
+  background: #eee7f2;
 }
 .detail-cover {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   display: block;
@@ -450,61 +446,59 @@ function share() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-left: 18px;
-  padding-right: 18px;
+  padding-left: 16px;
+  padding-right: 16px;
 }
 .gallery-icon {
-  background: rgba(255, 255, 255, 0.83);
-  padding: 0;
-  margin: 0;
-  width: 33px;
-  height: 33px;
-  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  margin: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.93);
 }
 .gallery-category {
-  font-size: 11px;
-  color: #8d769a;
-  background: rgba(255, 255, 255, 0.65);
-  padding: 6px 12px;
+  padding: 7px 13px;
   border-radius: 20px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #5f4c70;
+  font-size: 12px;
 }
 .gallery-bottom {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  position: absolute;
-  left: 18px;
-  right: 18px;
-  bottom: 20px;
 }
 .gallery-original {
   display: flex;
   align-items: center;
-  font-size: 9px;
-  color: white;
-  background: rgba(93, 54, 114, 0.25);
+  gap: 4px;
   padding: 5px 9px;
   border-radius: 5px;
+  background: rgba(52, 36, 65, 0.52);
+  color: #fff;
+  font-size: 11px;
 }
 .gallery-count {
-  font-size: 10px;
   padding: 5px 9px;
   border-radius: 20px;
-  color: white;
-  background: rgba(66, 36, 76, 0.3);
+  background: rgba(52, 36, 65, 0.52);
+  color: #fff;
+  font-size: 11px;
 }
 .detail-body {
   position: relative;
-  border-radius: 22px 22px 0 0;
-  margin-top: -8px;
-  overflow: hidden;
 }
 .product-info {
-  background: white;
-  padding: 22px 20px 0;
+  padding: 18px 16px;
+  background: #fff;
 }
 .price-line {
   display: flex;
@@ -512,103 +506,93 @@ function share() {
   justify-content: space-between;
 }
 .detail-price {
-  color: #ec789a;
-  font-size: 30px;
-  line-height: 1;
+  color: #bd4569;
+  font-size: 32px;
+  line-height: 1.15;
   font-weight: 750;
 }
 .detail-price > text {
+  margin-right: 2px;
   font-size: 17px;
-  margin-right: 4px;
+  font-weight: 600;
 }
 .product-sales {
-  font-size: 9px;
-  color: #baa8bc;
+  font-size: 11px;
+  color: #81768b;
 }
 .detail-title {
   display: block;
-  font-size: 19px;
-  font-weight: 750;
-  margin-top: 17px;
-  line-height: 1.6;
-  letter-spacing: 0.3px;
+  margin-top: 12px;
+  color: #372d40;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.55;
 }
 .detail-subtitle {
   display: block;
-  color: #b09eb5;
-  font-size: 11px;
-  margin-top: 7px;
+  margin-top: 6px;
+  color: #81768b;
+  font-size: 12px;
+  line-height: 1.6;
 }
 .product-tags {
   display: flex;
+  flex-wrap: wrap;
   gap: 7px;
-  margin: 15px 0 19px;
+  margin-top: 12px;
 }
 .product-tags text {
-  color: #d88ca6;
-  background: #fff0f4;
-  border-radius: 4px;
-  font-size: 9px;
-  padding: 4px 7px;
-}
-.promises {
-  display: flex;
-  gap: 19px;
-  border-top: 1px solid #f6f1f7;
-  padding: 13px 0;
-}
-.promises > view {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  color: #a68ab8;
-  font-size: 9px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: #f2edf8;
+  color: #765592;
+  font-size: 10px;
+  line-height: 1.4;
 }
 .detail-options {
-  background: white;
-  padding: 2px 20px;
+  padding: 2px 16px;
   margin-top: 10px;
+  background: #fff;
 }
 .option-row {
   display: flex;
   align-items: center;
-  min-height: 44px;
   gap: 14px;
-  font-size: 11px;
+  min-height: 50px;
   padding: 0;
   margin: 0;
-  background: white;
-  line-height: 1.5;
-  border-bottom: 1px solid #f7f3f9;
+  border-bottom: 1px solid #f1edf5;
   border-radius: 0;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.5;
   text-align: left;
 }
 .option-row:last-child {
   border-bottom: 0;
 }
 .option-label {
-  color: #b2a2bc;
+  flex-shrink: 0;
+  color: #81768b;
 }
 .option-content {
   flex: 1;
-  color: #746080;
-}
-.option-small {
-  font-size: 9px;
-  color: #aa91ba;
+  min-width: 0;
+  color: #53435e;
 }
 .shop-card {
   display: flex;
   align-items: center;
-  gap: 11px;
-  margin: 12px 0;
-  padding: 18px 20px;
-  background: white;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 16px;
+  background: #fff;
 }
 .shop-avatar {
-  width: 43px;
-  height: 43px;
-  border-radius: 12px;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
 }
 .shop-copy {
   flex: 1;
@@ -618,75 +602,72 @@ function share() {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 13px;
+  color: #44334f;
+  font-size: 14px;
   font-weight: 650;
 }
 .shop-description {
   display: block;
-  font-size: 9px;
-  color: #b2a0bf;
-  margin-top: 7px;
+  overflow: hidden;
+  margin-top: 5px;
+  color: #81768b;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .visit-shop {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 2px;
-  background: #f4edfc;
-  color: #a07ac7;
-  font-size: 9px;
-  padding: 7px 9px;
-  border-radius: 20px;
+  min-height: 34px;
+  padding: 7px 10px;
   margin: 0;
+  border: 1px solid #e6d9f1;
+  border-radius: 18px;
+  background: #faf7ff;
+  color: #6541a5;
+  font-size: 11px;
   line-height: 1.5;
 }
 .description {
-  background: white;
-  padding: 22px 20px;
+  padding: 20px 16px;
+  background: #fff;
 }
 .description-heading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  color: #9572af;
-  font-size: 13px;
-  font-weight: 600;
-}
-.description-heading view {
-  height: 1px;
-  width: 23px;
-  background: #e6d7f2;
+  color: #44334f;
+  font-size: 16px;
+  font-weight: 700;
 }
 .description-copy {
   display: block;
-  text-align: center;
-  font-size: 11px;
-  line-height: 2.1;
-  color: #a697b3;
+  margin: 18px 0 14px;
+  color: #766880;
+  font-size: 12px;
+  line-height: 1.8;
   white-space: pre-line;
-  margin: 20px 0;
 }
 .description-art {
   display: block;
   width: 100%;
-  height: 190px;
-  border-radius: 13px;
+  height: auto;
+  border-radius: 10px;
 }
 .description-note {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  justify-content: center;
-  margin: 18px 0 0;
-  font-size: 10px;
-  color: #b39bc6;
+  display: block;
+  margin-top: 14px;
+  color: #81768b;
+  font-size: 11px;
+  line-height: 1.7;
 }
 .detail-demo-note {
   display: block;
+  margin: 20px 16px 4px;
+  color: #81768b;
+  font-size: 10px;
+  line-height: 1.6;
   text-align: center;
-  font-size: 9px;
-  margin: 19px 0 8px;
-  color: #c0b2c8;
 }
 .purchase-bar {
   position: fixed;
@@ -696,12 +677,12 @@ function share() {
   transform: translateX(-50%);
   width: 100%;
   max-width: 440px;
-  padding: 11px 15px calc(11px + env(safe-area-inset-bottom));
-  background: #fff;
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid #eee8f3;
+  background: #fff;
   display: flex;
-  gap: 11px;
   align-items: center;
+  gap: 12px;
 }
 .purchase-small {
   display: flex;
@@ -709,34 +690,41 @@ function share() {
   align-items: center;
   justify-content: center;
   gap: 5px;
+  min-width: 34px;
+  min-height: 46px;
+  padding: 0;
   margin: 0;
   background: transparent;
-  padding: 0;
-  min-width: 34px;
-  font-size: 9px;
-  color: #a194ab;
+  color: #766880;
+  font-size: 10px;
   line-height: 1.2;
 }
 .purchase-actions {
   display: flex;
   flex: 1;
   gap: 8px;
+  min-width: 0;
 }
 .purchase-actions button {
   flex: 1;
-  line-height: 1.5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 10px 5px;
   margin: 0;
-  font-size: 12px;
-  padding: 13px 6px;
-  border-radius: 10px;
-  color: white;
-  font-weight: 550;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
 }
 .add-button {
-  background: #b38be4;
+  background: #f0e8fa;
+  color: #6541a5;
 }
 .buy-button {
-  background: #ed82a5;
+  background: #8056cf;
+  color: #fff;
 }
 .detail-cart-icon {
   position: relative;
@@ -772,10 +760,10 @@ function share() {
 }
 .sku-price {
   display: block;
-  color: #e87c9f;
-  font-size: 25px;
+  margin-top: 8px;
+  color: #bd4569;
+  font-size: 26px;
   font-weight: 700;
-  margin-top: 10px;
 }
 .sku-stock {
   display: block;
@@ -794,19 +782,19 @@ function share() {
   margin-top: 12px;
 }
 .sku-variants button {
-  font-size: 12px;
-  color: #a08cae;
-  background: #f7f3fa;
-  border: 1px solid #f1ebf5;
-  padding: 10px 20px;
-  border-radius: 9px;
+  padding: 11px 18px;
   margin: 0;
+  border: 1px solid #e9e1f1;
+  border-radius: 10px;
+  background: #faf8fc;
+  color: #766880;
+  font-size: 13px;
   line-height: 1.4;
 }
 .sku-variants button.chosen {
-  color: #9466c4;
-  border-color: #bd9ce0;
-  background: #f5edff;
+  color: #6541a5;
+  border-color: #a47ad6;
+  background: #f2eafa;
 }
 .sku-variants button > text {
   font-size: 9px;
@@ -856,15 +844,48 @@ function share() {
 .missing-product {
   padding-top: 160px;
 }
+
+.detail-body :deep(.sync-status:not(.disconnected)) {
+  margin: 0;
+  padding: 8px 16px 0;
+  border-radius: 0;
+  background: #fff;
+  color: #81768b;
+}
+.product-facts {
+  margin-top: 16px;
+  padding: 2px 12px;
+  border-radius: 10px;
+  background: #f8f6fb;
+}
+.product-facts > view {
+  display: flex;
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px solid #eee8f3;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.product-facts > view:last-child {
+  border-bottom: 0;
+}
+.product-facts > view > text:first-child {
+  flex-shrink: 0;
+  color: #81768b;
+}
+.product-facts > view > text:last-child {
+  flex: 1;
+  min-width: 0;
+  color: #53435e;
+  word-break: break-all;
+}
+
 /* #ifdef MP-WEIXIN */
 .gallery-top {
   padding-right: 112px;
 }
 /* #endif */
 @media (max-width: 360px) {
-  .detail-gallery {
-    height: 360px;
-  }
   .purchase-bar {
     gap: 8px;
     padding-left: 12px;

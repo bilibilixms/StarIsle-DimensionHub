@@ -21,9 +21,10 @@ function favorite(id: string) {
 <template>
   <view class="product-grid">
     <view v-for="product in products" :key="product.id" class="product-card">
-      <view
+      <button
         class="product-cover-wrap"
         :data-testid="`product-${product.id}`"
+        :aria-label="`查看商品：${product.title}`"
         @click="open(product.id)"
       >
         <image
@@ -33,8 +34,8 @@ function favorite(id: string) {
           mode="aspectFill"
           :aria-label="product.title"
         />
-        <text class="product-cover-tag">{{ product.tag }}</text>
-      </view>
+        <text v-if="product.tag" class="product-cover-tag">{{ product.tag }}</text>
+      </button>
       <view class="product-copy">
         <text class="product-name" @click="open(product.id)">{{ product.title }}</text>
         <text class="product-subtitle">{{ product.subtitle }}</text>
@@ -51,20 +52,17 @@ function favorite(id: string) {
             <text class="currency">¥</text>
             {{ money(product.price) }}
           </text>
-          <button
-            class="favorite-button"
-            :aria-label="favorites.includes(product.id) ? '取消收藏' : '收藏商品'"
-            :data-testid="`favorite-${product.id}`"
-            @click="favorite(product.id)"
-          >
-            <Icon
-              name="heart"
-              :tone="favorites.includes(product.id) ? 'pink' : 'muted'"
-              :size="18"
-            />
-          </button>
+          <text class="product-sales">已售 {{ product.sold }}</text>
         </view>
       </view>
+      <button
+        class="favorite-button"
+        :aria-label="favorites.includes(product.id) ? '取消收藏' : '收藏商品'"
+        :data-testid="`favorite-${product.id}`"
+        @click.stop="favorite(product.id)"
+      >
+        <Icon name="heart" :tone="favorites.includes(product.id) ? 'pink' : 'muted'" :size="17" />
+      </button>
     </view>
   </view>
 </template>
@@ -73,27 +71,36 @@ function favorite(id: string) {
 .product-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 12px;
+  gap: 12px 10px;
 }
 .product-card {
-  background: #fff;
-  border: 1px solid #f0ecf4;
-  border-radius: 14px;
+  position: relative;
+  min-width: 0;
   overflow: hidden;
+  border-radius: 12px;
+  background: #fff;
 }
 .product-cover-wrap {
   position: relative;
-  padding-top: 106%;
+  display: block;
+  width: 100%;
+  height: 0;
+  padding: 100% 0 0;
+  margin: 0;
   overflow: hidden;
-  background: #ede1f1;
+  border: 0;
+  border-radius: 0;
+  background: #eee7f2;
+  line-height: 1;
+  text-align: left;
 }
 .product-cover {
   position: absolute;
   top: 0;
   left: 0;
+  display: block;
   width: 100%;
   height: 100%;
-  display: block;
 }
 .product-cover.artwork {
   object-position: 80% center;
@@ -102,57 +109,74 @@ function favorite(id: string) {
   position: absolute;
   left: 8px;
   bottom: 8px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.9);
-  color: #9364ac;
-  font-size: 8px;
-  padding: 3px 6px;
+  max-width: calc(100% - 16px);
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #654970;
+  font-size: 10px;
+  line-height: 1.2;
 }
 .product-copy {
-  padding: 11px 10px 8px;
+  padding: 10px;
 }
 .product-name {
-  display: block;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.6;
-  white-space: nowrap;
+  display: -webkit-box;
+  min-height: 38px;
   overflow: hidden;
-  text-overflow: ellipsis;
+  color: #372d40;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 19px;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 .product-subtitle {
   display: block;
-  font-size: 9px;
-  line-height: 1.5;
-  margin-top: 5px;
-  color: #94879e;
-  white-space: nowrap;
   overflow: hidden;
+  margin-top: 4px;
+  color: #81768b;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
   text-overflow: ellipsis;
 }
 .product-meta {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
-  align-items: center;
-  margin-top: 8px;
+  gap: 4px;
+  margin-top: 9px;
 }
 .product-price {
-  color: #e67b98;
-  font-size: 17px;
-  font-weight: 700;
+  color: #bd4569;
+  font-size: 21px;
+  font-weight: 750;
+  line-height: 1.2;
 }
 .currency {
+  margin-right: 1px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.product-sales {
+  flex-shrink: 0;
+  color: #81768b;
   font-size: 10px;
-  margin-right: 2px;
 }
 .favorite-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
-  margin: 0 -4px 0 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  margin: 0;
   border-radius: 50%;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.94);
   line-height: 1;
 }
 </style>
