@@ -11,10 +11,9 @@ export function prepareMiniapp(appRoot) {
   for (const file of readdirSync(resolve(root, 'packages/ui/src')))
     if (/\.(vue|css|ts)$/.test(file))
       copyFileSync(resolve(root, 'packages/ui/src', file), resolve(ui, file))
-  copyFileSync(
-    resolve(root, 'apps/merchant-miniapp/src/components/MerchantWorkspace.vue'),
-    resolve(ui, 'MerchantWorkspace.vue'),
-  )
+  for (const file of readdirSync(resolve(root, 'apps/merchant-miniapp/src/components')))
+    if (file.endsWith('.vue'))
+      copyFileSync(resolve(root, 'apps/merchant-miniapp/src/components', file), resolve(ui, file))
   for (const file of readdirSync(resolve(root, 'apps/user-miniapp/src/components')))
     if (file.endsWith('.vue'))
       copyFileSync(resolve(root, 'apps/user-miniapp/src/components', file), resolve(user, file))

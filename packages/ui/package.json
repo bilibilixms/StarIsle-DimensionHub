@@ -11,7 +11,8 @@
     "./Sheet.vue": "./src/Sheet.vue",
     "./theme.css": "./src/theme.css",
     "./SyncStatus.vue": "./src/SyncStatus.vue",
-    "./useDemoSync": "./src/useDemoSync.ts"
+    "./useDemoSync": "./src/useDemoSync.ts",
+    "./ReviewCard.vue": "./src/ReviewCard.vue"
   },
   "peerDependencies": {
     "vue": "^3.4.21"

@@ -7,6 +7,8 @@
     ".": "./src/index.ts",
     "./demo": "./src/demo.ts",
     "./auth": "./src/auth.ts",
-    "./admin": "./src/admin.ts"
+    "./admin": "./src/admin.ts",
+    "./product-images": "./src/product-images.ts",
+    "./product-videos": "./src/product-videos.ts"
   }
 }

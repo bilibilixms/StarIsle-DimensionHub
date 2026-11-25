@@ -178,3 +178,122 @@ test('unknown and reset orders show an empty state and return to the order list'
   await expect(page.getByTestId('order-detail-missing')).toContainText('未找到这笔订单')
   await expect(page.getByTestId('order-detail-receive')).toHaveCount(0)
 })
+
+test('buyer requests refund and merchant approves it in the order detail', async ({
+  page,
+  context,
+  request,
+}) => {
+  const order = await purchase(request)
+  await page.goto(`http://127.0.0.1:4173/#/pages/order/detail?id=${order.id}`)
+  await page.getByTestId('refund-reason').locator('textarea').fill('款式选错，重新购买')
+  await page.getByTestId('request-refund').click()
+  await expect(page.getByTestId('order-detail-status')).toHaveText('退款中')
+  const seller = await context.newPage()
+  await seller.goto(merchant)
+  await expect(seller.locator('.todo-total')).toContainText('还有 1 件事')
+  await expect(seller.locator('.metric-money')).toContainText('316')
+  await seller.getByTestId('refund-orders').click()
+  await seller.getByTestId(`order-${order.id}`).getByText('查看详情').click()
+  await expect(seller.getByTestId('merchant-refund-record')).toContainText('款式选错，重新购买')
+  await seller.getByTestId('approve-refund').click()
+  await seller.locator('uni-modal').getByText('同意退款', { exact: true }).click()
+  await expect(page.getByTestId('order-detail-status')).toHaveText('已退款')
+  await expect(page.getByTestId('refund-record')).toContainText('商家同意整单退款')
+  await page.reload()
+  await expect(page.getByTestId('order-detail-status')).toHaveText('已退款')
+  await seller.reload()
+  await expect(seller.locator('.metric-money .metric-value')).toHaveText('¥ 0')
+  await expect(seller.locator('.todo-total')).toContainText('还有 0 件事')
+  await seller.close()
+})
+
+test('merchant rejection requires a reason, syncs to buyer and allows shipment', async ({
+  page,
+  context,
+  request,
+}) => {
+  const order = await purchase(request)
+  await page.goto(`http://127.0.0.1:4173/#/pages/order/detail?id=${order.id}`)
+  await page.getByTestId('refund-reason').locator('textarea').fill('需要协商')
+  await page.getByTestId('request-refund').click()
+  await expect(page.getByTestId('order-detail-status')).toHaveText('退款中')
+  const seller = await context.newPage()
+  await seller.goto(merchant)
+  await seller.getByTestId('refund-orders').click()
+  await seller.getByTestId(`order-${order.id}`).getByText('查看详情').click()
+  await expect(seller.getByTestId('reject-refund')).toHaveAttribute('disabled', 'true')
+  await seller.getByTestId('refund-reply').locator('textarea').fill('请核对需求后重新申请')
+  await seller.getByTestId('reject-refund').click()
+  await expect(page.getByTestId('order-detail-status')).toHaveText('待发货')
+  await expect(page.getByTestId('refund-record')).toContainText('请核对需求后重新申请')
+  await expect(page.getByTestId('request-refund')).toBeVisible()
+  await seller.reload()
+  await seller.getByTestId('waiting-orders').click()
+  await expect(seller.getByTestId(`ship-${order.id}`)).toBeVisible()
+  await ship(request, order.id)
+  await expect(page.getByTestId('order-detail-status')).toHaveText('待收货')
+  await expect(page.getByTestId('request-refund')).toBeVisible()
+  await seller.close()
+})
+
+for (const completed of [false, true]) {
+  test(`${completed ? 'completed' : 'shipped'} order supports return-refund through merchant receipt`, async ({
+    page,
+    context,
+    request,
+  }) => {
+    const order = await purchase(request)
+    await ship(request, order.id)
+    if (completed) await command(request, 'user', { type: 'receive', id: order.id })
+    await page.goto(`http://127.0.0.1:4173/#/pages/order/detail?id=${order.id}`)
+    await page.getByTestId('return-refund').click()
+    await page.getByTestId('refund-reason').locator('textarea').fill('实物不合适，申请退货')
+    await page.getByTestId('request-refund').click()
+    await expect(page.getByTestId('refund-record')).toContainText('等待商家审核')
+    const seller = await context.newPage()
+    await seller.goto(merchant)
+    await seller.getByTestId('refund-orders').click()
+    await seller.getByTestId(`order-${order.id}`).getByText('查看详情').click()
+    await seller.getByTestId('return-recipient').locator('input').fill('星屿退货部')
+    await seller.getByTestId('return-phone').locator('input').fill('13800000000')
+    await seller
+      .getByTestId('merchant-return-address')
+      .locator('textarea')
+      .fill('上海市 退货路 8 号')
+    await seller.getByTestId('approve-refund').click()
+    await seller.locator('uni-modal').getByText('同意退款', { exact: true }).click()
+    await expect(page.getByTestId('return-address')).toContainText('上海市 退货路 8 号')
+    await expect(page.getByTestId('order-detail-status')).toHaveText('退款中')
+    await page.getByTestId('return-tracking').locator('input').fill('SF202611130001')
+    await page.getByTestId('submit-return').click()
+    await expect(page.getByTestId('refund-record')).toContainText('等待商家收货')
+    await expect(page.getByTestId('cancel-refund')).toHaveCount(0)
+    await expect(seller.getByTestId('merchant-return-logistics')).toContainText('SF202611130001')
+    await seller.getByTestId('confirm-return-refund').click()
+    await seller.locator('uni-modal').getByText('确认退款', { exact: true }).click()
+    await expect(page.getByTestId('order-detail-status')).toHaveText('已退款')
+    await page.reload()
+    await expect(page.getByTestId('refund-record')).toContainText('退款成功')
+    if (completed) await expect(page.getByTestId('order-detail-completed-at')).not.toHaveText('')
+    await seller.close()
+  })
+}
+
+test('completed order can cancel after-sales and reapply for refund only', async ({
+  page,
+  request,
+}) => {
+  const order = await purchase(request)
+  await ship(request, order.id)
+  await command(request, 'user', { type: 'receive', id: order.id })
+  await page.goto(`http://127.0.0.1:4173/#/pages/order/detail?id=${order.id}`)
+  await page.getByTestId('refund-reason').locator('textarea').fill('协商退款')
+  await page.getByTestId('request-refund').click()
+  await page.getByTestId('cancel-refund').click()
+  await expect(page.getByTestId('order-detail-status')).toHaveText('已完成')
+  await page.getByTestId('refund-reason').locator('textarea').fill('再次申请')
+  await page.getByTestId('request-refund').click()
+  await command(request, 'merchant', { type: 'resolveRefund', id: order.id, approve: true })
+  await expect(page.getByTestId('order-detail-status')).toHaveText('已退款')
+})

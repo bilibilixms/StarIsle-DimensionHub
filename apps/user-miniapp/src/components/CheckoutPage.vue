@@ -13,6 +13,7 @@ import {
   syncDemoState,
   money,
   stockMessage,
+  variantStock,
   type CheckoutDraft,
   type CheckoutPreviewItem,
 } from '@starisle/shared/demo'
@@ -22,6 +23,10 @@ const draft = ref<CheckoutDraft>()
 const busy = ref(false)
 const error = ref('')
 const statusHeight = uni.getSystemInfoSync().statusBarHeight || 0
+function itemStock(item: CheckoutPreviewItem) {
+  const product = state.value.products.find((product) => product.id === item.productId)
+  return product ? variantStock(product, item.variantKey) : 0
+}
 function load() {
   draft.value = getCheckoutDraft(props.id)
 }
@@ -211,11 +216,7 @@ async function pay() {
               <text class="checkout-item-title">{{ item.title }}</text>
               <text class="checkout-variant">{{ item.variant }} × {{ item.quantity }}</text>
               <text class="checkout-stock" data-testid="checkout-item-stock">
-                {{
-                  stockMessage(
-                    state.products.find((product) => product.id === item.productId)?.stock || 0,
-                  )
-                }}
+                {{ stockMessage(itemStock(item)) }}
               </text>
             </view>
             <text class="checkout-item-price">¥{{ money(item.amount) }}</text>

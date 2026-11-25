@@ -7,6 +7,8 @@ import {
   money,
   updateCart,
   variantPrice,
+  variantName,
+  variantStock,
   syncDemoState,
   cartCheckoutIssue,
   stockMessage,
@@ -18,9 +20,10 @@ const props = defineProps<{ state: DemoState }>()
 const emit = defineEmits<{ refresh: []; completed: []; browse: [] }>()
 const busy = ref(false)
 const checkoutIssue = computed(() => cartCheckoutIssue(props.state))
-function cartQuantity(productId: string) {
+function cartQuantity(productId: string, variant: string) {
+  const product = props.state.products.find((product) => product.id === productId)
   return props.state.cart
-    .filter((item) => item.productId === productId)
+    .filter((item) => item.productId === productId && (!product?.skus || item.variant === variant))
     .reduce((sum, item) => sum + item.quantity, 0)
 }
 const items = computed(() =>
@@ -105,26 +108,30 @@ async function checkout() {
               state.shop.name
             }}
           </text>
-          <text class="cart-variant">{{ item.variant === 'gift' ? '礼盒版' : '标准版' }}</text>
+          <text class="cart-variant">{{ variantName(item.product, item.variant) }}</text>
           <text
             v-if="
               !item.product.published ||
-              item.product.stock <= LOW_STOCK_LIMIT ||
-              cartQuantity(item.productId) > item.product.stock
+              variantStock(item.product, item.variant) <= LOW_STOCK_LIMIT ||
+              cartQuantity(item.productId, item.variant) > variantStock(item.product, item.variant)
             "
             class="stock-hint"
             :class="{
-              'stock-low': item.product.stock > 0,
-              'stock-empty': item.product.stock === 0,
+              'stock-low': variantStock(item.product, item.variant) > 0,
+              'stock-empty': variantStock(item.product, item.variant) === 0,
             }"
             data-testid="cart-stock"
           >
             {{
               !item.product.published
                 ? '商品已下架'
-                : cartQuantity(item.productId) > item.product.stock && item.product.stock > 0
-                  ? `库存不足，仅剩 ${item.product.stock} 件，请调整数量`
-                  : stockMessage(item.product.stock)
+                : variantName(item.product, item.variant) === '规格已调整'
+                  ? '规格已调整，请移除后重新选择'
+                  : cartQuantity(item.productId, item.variant) >
+                        variantStock(item.product, item.variant) &&
+                      variantStock(item.product, item.variant) > 0
+                    ? `库存不足，仅剩 ${variantStock(item.product, item.variant)} 件，请调整数量`
+                    : stockMessage(variantStock(item.product, item.variant))
             }}
           </text>
           <view class="cart-bottom">
@@ -143,7 +150,8 @@ async function checkout() {
                 :disabled="
                   busy ||
                   !item.product.published ||
-                  cartQuantity(item.productId) >= item.product.stock
+                  cartQuantity(item.productId, item.variant) >=
+                    variantStock(item.product, item.variant)
                 "
                 @click="change(item, 'plus')"
               >

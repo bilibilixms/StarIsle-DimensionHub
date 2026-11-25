@@ -8,7 +8,8 @@ import { getDemoSession, logoutDemo, openLogin } from '@starisle/shared/auth'
 import {
   DEMO_ASSETS,
   money,
-  resetLocalDemoState,
+  orderItems,
+  reviewItemKey,
   receiveDemoOrder,
   editDemoRecipient,
   type DemoState,
@@ -79,21 +80,20 @@ function receive(order: DemoOrder) {
 function openProduct(id: string) {
   uni.navigateTo({ url: `/pages/product/detail?id=${id}` })
 }
-function openOrder(id: string) {
-  uni.navigateTo({ url: `/pages/order/detail?id=${encodeURIComponent(id)}` })
-}
-function reset() {
-  uni.showModal({
-    title: '清空本机收藏与购物车',
-    content: '清空本机收藏和购物车。收货地址和已支付订单会保留。',
-    confirmColor: '#8b5cf6',
-    success(result) {
-      if (result.confirm) {
-        resetLocalDemoState()
-        emit('refresh')
-      }
-    },
+function openOrder(id: string, action?: 'review' | 'aftersale') {
+  uni.navigateTo({
+    url: `/pages/order/detail?id=${encodeURIComponent(id)}${action ? '&action=' + action : ''}`,
   })
+}
+function hasReviews(order: DemoOrder) {
+  return props.state.reviews.some((review) => review.orderId === order.id)
+}
+function allReviewed(order: DemoOrder) {
+  return orderItems(order).every((item) =>
+    props.state.reviews.some(
+      (review) => review.orderId === order.id && review.itemKey === reviewItemKey(item),
+    ),
+  )
 }
 </script>
 
@@ -165,19 +165,45 @@ function reset() {
           <text>{{ order.carrier }} · {{ order.tracking }}</text>
           <text>{{ order.shippedAt }} 模拟发货</text>
         </view>
-        <button
-          v-if="order.status === '待收货'"
-          class="secondary-button receive-button"
-          :disabled="!!busy"
-          :loading="busy === order.id"
-          :data-testid="`receive-${order.id}`"
-          @click.stop="receive(order)"
-        >
-          确认收货
-        </button>
         <text v-if="order.completedAt" class="order-number">
           {{ order.completedAt }} 已确认收货
         </text>
+        <view class="order-card-actions" @click.stop>
+          <button
+            v-if="['待发货', '待收货', '已完成', '退款中', '已退款'].includes(order.status)"
+            class="secondary-button order-card-action"
+            :data-testid="`aftersale-${order.id}`"
+            @click.stop="openOrder(order.id, 'aftersale')"
+          >
+            {{
+              order.status === '退款中'
+                ? '售后进度'
+                : order.status === '已退款'
+                  ? '退款详情'
+                  : '申请售后'
+            }}
+          </button>
+          <button
+            v-if="order.status === '已完成' || hasReviews(order)"
+            class="secondary-button order-card-action review-action"
+            :data-testid="`review-order-${order.id}`"
+            @click.stop="openOrder(order.id, 'review')"
+          >
+            {{
+              allReviewed(order) ? '查看评价' : order.status === '已完成' ? '去评价' : '查看评价'
+            }}
+          </button>
+          <button
+            v-if="order.status === '待收货'"
+            class="secondary-button order-card-action review-action"
+            :disabled="!!busy"
+            :loading="busy === order.id"
+            :data-testid="`receive-${order.id}`"
+            @click.stop="receive(order)"
+          >
+            确认收货
+          </button>
+        </view>
       </view>
       <view v-if="!state.orders.length" class="empty-state">
         <Icon name="receipt" tone="purple" :size="40" />
@@ -206,11 +232,14 @@ function reset() {
         <text class="empty-copy">在商品卡片点亮爱心，下次还能找到它。</text>
       </view>
     </template>
-    <button class="reset-button" @click="reset">清空本机收藏与购物车</button>
-    <button class="secondary-button" data-testid="switch-role" @click="openLogin('merchant')">
-      切换身份
-    </button>
-    <button class="reset-button" data-testid="logout" @click="logout">退出登录</button>
+    <view class="profile-actions">
+      <button class="secondary-button" data-testid="switch-role" @click="openLogin('merchant')">
+        切换身份
+      </button>
+      <button class="secondary-button logout-button" data-testid="logout" @click="logout">
+        退出登录
+      </button>
+    </view>
     <text class="profile-footnote">这是一座正在生长的小岛。感谢你来做客。</text>
     <Sheet :visible="addressSheet" title="演示收货地址" @close="addressSheet = false">
       <AddressEditor
@@ -238,9 +267,25 @@ function reset() {
   font-size: 10px;
   line-height: 1.7;
 }
-.receive-button {
-  margin: 12px 0 0 auto;
-  width: fit-content;
+.order-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 16px;
+}
+.order-card-actions .order-card-action {
+  width: auto;
+  min-height: 34px;
+  margin: 0;
+  padding: 7px 13px;
+  border-radius: 18px;
+  font-size: 12px;
+}
+.order-card-actions .review-action {
+  color: #7a51b9;
+  border-color: #b99bdb;
+  background: #faf7ff;
 }
 .profile-content {
   padding: 14px 20px;
@@ -389,12 +434,19 @@ function reset() {
   color: #df7a9c;
   margin-top: 10px;
 }
-.reset-button {
-  background: transparent;
-  font-size: 11px;
-  color: #aa99b8;
-  margin: 30px auto 0;
-  line-height: 1.8;
+.profile-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 30px;
+}
+.profile-actions .secondary-button {
+  width: 100%;
+  box-sizing: border-box;
+}
+.profile-actions .logout-button {
+  color: #c93645;
+  border-color: #edc4ca;
 }
 .profile-footnote {
   display: block;

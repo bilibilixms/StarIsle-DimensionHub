@@ -1,6 +1,9 @@
 import {
   DEMO_RECIPIENT,
   variantPrice,
+  productVariants,
+  variantName,
+  variantStock,
   validateRecipient,
   validateDemoStock,
   DEMO_ASSETS,
@@ -16,6 +19,7 @@ import {
   type DemoRecipient,
   type DemoShop,
   type DemoOrderItem,
+  type DemoReviewView,
 } from './demo-domain'
 import { getDemoSession, clearDemoSession, openLogin, demoApiBase, requireDemoLogin } from './auth'
 export {
@@ -23,14 +27,25 @@ export {
   DEMO_PRODUCTS,
   money,
   variantPrice,
+  productVariants,
+  variantName,
+  variantStock,
   stockMessage,
   LOW_STOCK_LIMIT,
   productShopId,
   DEMO_SHOP_ID,
   orderItems,
+  productTags,
+  tagKey,
+  normalizeProductTags,
+  normalizeSearchText,
+  productMatchesSearch,
+  reviewItemKey,
 } from './demo-domain'
 export { validateRecipient } from './demo-domain'
-export type { DemoProduct, DemoOrder, DemoOrderStatus, DemoRecipient } from './demo-domain'
+export { REFUND_STATUS_LABELS } from './demo-domain'
+export type { DemoReviewView } from './demo-domain'
+export type { DemoProduct, DemoOrder, DemoOrderStatus, DemoRecipient, DemoSku } from './demo-domain'
 export interface DemoAddress extends DemoRecipient {
   id: string
 }
@@ -52,6 +67,7 @@ export interface DemoCartItem {
   variant: DemoVariant
   quantity: number
   selected: boolean
+  variantName?: string
 }
 export interface DemoState {
   version: 2
@@ -61,6 +77,7 @@ export interface DemoState {
   orders: DemoOrder[]
   merchantOrders: DemoOrder[]
   products: DemoProduct[]
+  reviews: DemoReviewView[]
   shop: Omit<DemoShop, 'id'>
   shops: DemoShop[]
   addresses: DemoAddress[]
@@ -138,6 +155,7 @@ export function getDemoState(storageKey = key(), role = activeRole): DemoState {
     addresses: data.addresses,
     defaultAddressId: data.defaultAddressId,
     products: data.marketplace?.products || [],
+    reviews: data.marketplace?.reviews || [],
     orders: role === 'user' && getDemoSession() ? data.marketplace?.orders || [] : [],
     merchantOrders: role === 'merchant' ? data.marketplace?.orders || [] : [],
     shop: data.marketplace?.shop || { name: '星屿周边馆', description: '认真收藏，每一份热爱' },
@@ -362,7 +380,13 @@ function previewItems(command: DemoCheckout, data: LocalData): CheckoutPreviewIt
       productId: item.productId,
       title: product?.title || '已下架商品',
       cover: product?.cover || DEMO_ASSETS.figurine,
-      variant: item.variant === 'gift' ? '礼盒版' : '标准版',
+      variant:
+        item.variantName ||
+        (product
+          ? variantName(product, item.variant)
+          : item.variant === 'gift'
+            ? '礼盒版'
+            : '标准版'),
       variantKey: item.variant,
       quantity: item.quantity,
       unitPrice: item.expectedPrice,
@@ -433,6 +457,8 @@ export function checkoutProblem(draft: CheckoutDraft, state = getDemoState()): s
       const product = state.products.find((product) => product.id === item.productId)!
       if (variantPrice(product, item.variant) !== item.expectedPrice)
         return '商品价格已变化，请更新商品信息后重新确认'
+      if (item.variantName && variantName(product, item.variant) !== item.variantName)
+        return '商品规格名称已变化，请更新商品信息后重新确认'
     }
     if (!draft.addressId || !state.addresses.some((address) => address.id === draft.addressId))
       return '请选择收货地址'
@@ -478,12 +504,6 @@ export async function submitCheckout(id: string): Promise<CheckoutDraft> {
   })
   return getCheckoutDraft(id) || draft
 }
-export function resetLocalDemoState(): DemoState {
-  const data = load()
-  data.cart = []
-  data.favorites = []
-  return save(data)
-}
 export function resetDemoState(): Promise<DemoState> {
   return mutate({ type: 'reset' })
 }
@@ -493,12 +513,22 @@ export function addToCart(productId: string, variant: DemoVariant, quantity: num
   if (!product || !Number.isInteger(quantity) || quantity < 1)
     throw new Error('请选择有效的商品数量')
   const existingQuantity = data.cart
-    .filter((item) => item.productId === productId)
+    .filter((item) => item.productId === productId && (!product.skus || item.variant === variant))
     .reduce((sum, item) => sum + item.quantity, 0)
-  if (existingQuantity + quantity > product.stock) throw new Error('已超过可选库存数量')
+  if (!productVariants(product).some((sku) => sku.id === variant))
+    throw new Error('商品规格已调整，请重新选择')
+  if (existingQuantity + quantity > variantStock(product, variant))
+    throw new Error('已超过可选库存数量')
   const item = data.cart.find((item) => item.productId === productId && item.variant === variant)
   if (item) item.quantity += quantity
-  else data.cart.push({ productId, variant, quantity, selected: true })
+  else
+    data.cart.push({
+      productId,
+      variant,
+      variantName: variantName(product, variant),
+      quantity,
+      selected: true,
+    })
   return save(data)
 }
 export function updateCart(
@@ -517,9 +547,12 @@ export function updateCart(
       (product) => product.id === productId && product.published,
     )
     const total = data.cart
-      .filter((entry) => entry.productId === productId)
+      .filter(
+        (entry) => entry.productId === productId && (!product?.skus || entry.variant === variant),
+      )
       .reduce((sum, entry) => sum + entry.quantity, 0)
-    if (!product || total >= product.stock) throw new Error('已达到库存上限或商品已下架')
+    if (!product || total >= variantStock(product, variant))
+      throw new Error('已达到库存上限或商品规格已调整')
     item.quantity += 1
   }
   return save(data)
@@ -527,7 +560,15 @@ export function updateCart(
 function line(productId: string, variant: DemoVariant, quantity: number): DemoCheckoutLine {
   const product = getDemoState().products.find((product) => product.id === productId)
   if (!product) throw new Error('商品已下架，请重新选择')
-  return { productId, variant, quantity, expectedPrice: variantPrice(product, variant) }
+  if (!productVariants(product).some((sku) => sku.id === variant))
+    throw new Error('商品规格已调整，请重新选择')
+  return {
+    productId,
+    variant,
+    variantName: variantName(product, variant),
+    quantity,
+    expectedPrice: variantPrice(product, variant),
+  }
 }
 function pendingCheckout(
   source: 'cart' | 'buy',
@@ -612,6 +653,52 @@ export function checkoutCart(checkout = prepareCartCheckout()): Promise<DemoStat
 export function buyDemoProduct(checkout: DemoCheckout): Promise<DemoState> {
   return mutate(checkout)
 }
+export function submitDemoReview(
+  orderId: string,
+  itemKey: string,
+  rating: number,
+  content: string,
+  images: string[],
+): Promise<DemoState> {
+  return mutate({ type: 'submitReview', orderId, itemKey, rating, content, images })
+}
+export function replyDemoReview(id: string, content: string): Promise<DemoState> {
+  return mutate({ type: 'replyReview', id, content })
+}
+export function requestDemoRefund(
+  id: string,
+  reason: string,
+  refundType: 'REFUND_ONLY' | 'RETURN_REFUND' = 'REFUND_ONLY',
+): Promise<DemoState> {
+  return mutate({ type: 'requestRefund', id, reason, refundType })
+}
+export function resolveDemoRefund(
+  id: string,
+  approve: boolean,
+  reply = '',
+  returnAddress?: DemoRecipient,
+  refundId?: string,
+): Promise<DemoState> {
+  return mutate({ type: 'resolveRefund', id, approve, reply, returnAddress, refundId })
+}
+export function cancelDemoRefund(id: string, refundId?: string): Promise<DemoState> {
+  return mutate({ type: 'cancelRefund', id, refundId })
+}
+export function returnDemoRefund(
+  id: string,
+  carrier: string,
+  tracking: string,
+  refundId?: string,
+): Promise<DemoState> {
+  return mutate({ type: 'returnRefund', id, carrier, tracking, refundId })
+}
+export function confirmDemoRefundReturn(
+  id: string,
+  restock: boolean,
+  refundId?: string,
+): Promise<DemoState> {
+  return mutate({ type: 'confirmRefundReturn', id, restock, refundId })
+}
 export function shipDemoOrder(id: string, carrier: string, tracking: string): Promise<DemoState> {
   return mutate({ type: 'ship', id, carrier, tracking })
 }
@@ -637,6 +724,9 @@ export function createDemoProduct(
   cover: string,
 ): Promise<DemoState> {
   return mutate({ type: 'createProduct', title, price, stock, cover })
+}
+export function saveDemoProduct(fields: Record<string, unknown>, id?: string): Promise<DemoState> {
+  return mutate({ ...fields, type: id ? 'editProduct' : 'createProduct', ...(id ? { id } : {}) })
 }
 export function editDemoShop(name: string, description: string): Promise<DemoState> {
   return mutate({ type: 'editShop', name, description })

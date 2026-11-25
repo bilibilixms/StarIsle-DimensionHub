@@ -12,7 +12,7 @@ import ProfileContent from './ProfileContent.vue'
 import { getDemoSession, openLogin, requireDemoLogin } from '@starisle/shared/auth'
 
 const { state, refresh, sync, syncError, connected, syncing } = useDemoSync()
-const props = defineProps<{ initialTab?: string }>()
+const props = defineProps<{ initialTab?: string; initialTag?: string }>()
 const tab = ref(props.initialTab || 'home')
 const messages = ref(false)
 const read = ref(false)
@@ -47,7 +47,9 @@ watch(
       v-if="tab === 'home' || tab === 'discover'"
       :state="state"
       :discover="tab === 'discover'"
+      :initial-tag="initialTag"
       @refresh="refresh"
+      @search="sync"
     />
     <CartContent
       v-else-if="tab === 'cart'"

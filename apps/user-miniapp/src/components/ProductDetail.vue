@@ -4,6 +4,7 @@ import SyncStatus from '@starisle/ui/SyncStatus.vue'
 import { useDemoSync } from '@starisle/ui/useDemoSync'
 import Icon from '@starisle/ui/Icon.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
+import ReviewCard from '@starisle/ui/ReviewCard.vue'
 import { requireDemoLogin } from '@starisle/shared/auth'
 import {
   addToCart,
@@ -15,21 +16,57 @@ import {
   LOW_STOCK_LIMIT,
   DEMO_SHOP_ID,
   money,
+  productTags,
   toggleFavorite,
   variantPrice,
+  productVariants,
+  variantName,
+  variantStock,
 } from '@starisle/shared/demo'
 
 const { state, sync, syncError, connected, syncing } = useDemoSync()
 const busy = ref(false)
 const props = defineProps<{ id: string }>()
 const id = computed(() => props.id)
-const variant = ref<'standard' | 'gift'>('standard')
+const variant = ref('standard')
+const galleryIndex = ref(0)
+const videoError = ref(false)
+const videoRetry = ref(0)
 const quantity = ref(1)
 const sheet = ref<'add' | 'buy' | ''>('')
 const error = ref('')
 const product = computed(() =>
   state.value.products.find((product) => product.id === id.value && product.published),
 )
+const productReviews = computed(() =>
+  state.value.reviews.filter((review) => review.productId === id.value),
+)
+const reviewAverage = computed(() =>
+  productReviews.value.length
+    ? (
+        productReviews.value.reduce((sum, review) => sum + review.rating, 0) /
+        productReviews.value.length
+      ).toFixed(1)
+    : '',
+)
+const showAllReviews = ref(false)
+const variants = computed(() => (product.value ? productVariants(product.value) : []))
+const selectedStock = computed(() =>
+  product.value ? variantStock(product.value, variant.value) : 0,
+)
+const galleryImages = computed(() =>
+  product.value?.images?.length ? product.value.images : product.value ? [product.value.cover] : [],
+)
+watch(
+  () => product.value?.video,
+  () => {
+    videoError.value = false
+    videoRetry.value = 0
+  },
+)
+watch(galleryImages, (images) => {
+  if (galleryIndex.value >= images.length) galleryIndex.value = 0
+})
 const currentShop = computed(
   () =>
     state.value.shops.find((shop) => shop.id === (product.value?.shopId || 'demo-shop')) ||
@@ -39,15 +76,36 @@ const pendingPurchase = computed(() => {
   void state.value
   return pendingBuyCheckout(id.value)
 })
+watch(
+  variants,
+  (items) => {
+    if (!sheet.value && !pendingPurchase.value && !items.some((sku) => sku.id === variant.value))
+      variant.value = (items.find((sku) => sku.stock > 0) || items[0])?.id || ''
+  },
+  { immediate: true },
+)
+function retryVideo() {
+  videoError.value = false
+  videoRetry.value++
+}
+function selectVariant(id: string) {
+  variant.value = id
+  quantity.value = 1
+  stockNotice.value = ''
+  error.value = ''
+}
 const cartQuantity = computed(() =>
   state.value.cart
-    .filter((item) => item.productId === id.value)
+    .filter(
+      (item) =>
+        item.productId === id.value && (!product.value?.skus || item.variant === variant.value),
+    )
     .reduce((sum, item) => sum + item.quantity, 0),
 )
 const maxQuantity = computed(() => {
   if (sheet.value === 'buy' && pendingPurchase.value)
     return pendingPurchase.value.items[0]!.quantity
-  return Math.max(0, (product.value?.stock || 0) - (sheet.value === 'add' ? cartQuantity.value : 0))
+  return Math.max(0, selectedStock.value - (sheet.value === 'add' ? cartQuantity.value : 0))
 })
 const stockNotice = ref('')
 watch(maxQuantity, (maximum, previous) => {
@@ -56,7 +114,7 @@ watch(maxQuantity, (maximum, previous) => {
     if (sheet.value && maximum < previous)
       stockNotice.value = maximum
         ? `库存已更新，最多可选 ${maximum} 件`
-        : product.value?.stock === 0
+        : selectedStock.value === 0
           ? '商品已售罄'
           : '购物车中的数量已达到库存上限'
   } else if (quantity.value < 1 && maximum > 0) quantity.value = 1
@@ -71,6 +129,9 @@ function openShop() {
   uni.navigateTo({
     url: `/pages/shop/detail?id=${encodeURIComponent(product.value?.shopId || DEMO_SHOP_ID)}`,
   })
+}
+function searchTag(tag: string) {
+  uni.navigateTo({ url: `/pages/index/index?tab=home&tag=${encodeURIComponent(tag)}` })
 }
 function back() {
   if (getCurrentPages().length > 1) uni.navigateBack()
@@ -135,18 +196,30 @@ function share() {
 <template>
   <view class="app-screen detail-screen">
     <template v-if="product">
+      <view class="detail-back-anchor" :style="{ paddingTop: `${statusHeight + 13}px` }">
+        <button class="gallery-icon" aria-label="返回" data-testid="product-back" @click="back">
+          <Icon name="chevron-left" tone="ink" :size="19" />
+        </button>
+      </view>
       <view class="detail-gallery">
-        <image
-          class="detail-cover"
-          :src="product.cover"
-          mode="aspectFill"
-          :aria-label="product.title"
-          @click="platform.previewImage({ urls: [product.cover] })"
-        />
+        <swiper
+          class="gallery-swiper"
+          :circular="galleryImages.length > 1"
+          :current="galleryIndex"
+          @change="galleryIndex = $event.detail.current"
+        >
+          <swiper-item v-for="image in galleryImages" :key="image">
+            <image
+              class="detail-cover"
+              :src="image"
+              mode="aspectFill"
+              :aria-label="product.title"
+              @click="platform.previewImage({ current: image, urls: galleryImages })"
+            />
+          </swiper-item>
+        </swiper>
         <view class="gallery-top" :style="{ paddingTop: `${statusHeight + 13}px` }">
-          <button class="gallery-icon" aria-label="返回" @click="back">
-            <Icon name="chevron-left" tone="ink" :size="19" />
-          </button>
+          <view class="gallery-back-placeholder" />
           <text class="gallery-category">商品详情</text>
           <button class="gallery-icon" aria-label="分享商品" @click="share">
             <Icon name="share" tone="ink" :size="18" />
@@ -157,11 +230,30 @@ function share() {
             <Icon name="sparkles" tone="white" :size="11" />
             {{ product.category }}
           </view>
-          <text class="gallery-count">1 / 1</text>
+          <text class="gallery-count">{{ galleryIndex + 1 }} / {{ galleryImages.length }}</text>
         </view>
       </view>
       <view class="detail-body">
         <SyncStatus :connected="connected" :syncing="syncing" :error="syncError" @retry="sync" />
+        <view v-if="product.video" class="product-info product-video-section">
+          <text class="video-heading">商品视频</text>
+          <video
+            :key="`${product.video}-${videoRetry}`"
+            :src="product.video"
+            :poster="product.cover"
+            class="product-video"
+            :autoplay="false"
+            controls
+            :show-center-play-btn="true"
+            object-fit="contain"
+            data-testid="detail-product-video"
+            @error="videoError = true"
+          />
+          <view v-if="videoError" class="video-error">
+            <text>视频暂时无法播放，请检查连接后重试。</text>
+            <button class="secondary-button" @click="retryVideo">重新加载视频</button>
+          </view>
+        </view>
         <view class="product-info">
           <view class="price-line">
             <text class="detail-price">
@@ -184,14 +276,22 @@ function share() {
           </text>
           <view class="product-tags">
             <text>{{ product.category }}</text>
-            <text v-if="product.tag">{{ product.tag }}</text>
+            <button
+              v-for="tag in productTags(product)"
+              :key="tag"
+              class="detail-tag"
+              :aria-label="`查找标签 ${tag}`"
+              @click="searchTag(tag)"
+            >
+              #{{ tag }}
+            </button>
           </view>
         </view>
         <view class="detail-options">
           <button class="option-row" data-testid="open-options" @click="choose('add')">
             <text class="option-label">选择</text>
             <text class="option-content">
-              {{ variant === 'gift' ? '礼盒版' : '标准版' }} · {{ quantity }} 件
+              {{ variantName(product, variant) }} · {{ quantity }} 件
             </text>
             <Icon name="chevron-right" :size="14" />
           </button>
@@ -213,6 +313,29 @@ function share() {
             <Icon name="chevron-right" tone="purple" :size="12" />
           </button>
         </view>
+        <view class="product-reviews" data-testid="product-reviews">
+          <view class="reviews-heading">
+            <text>买家评价（{{ productReviews.length }}）</text>
+            <text v-if="reviewAverage" data-testid="review-average">
+              {{ reviewAverage }} 分 / 5
+            </text>
+          </view>
+          <ReviewCard
+            v-for="review in showAllReviews ? productReviews : productReviews.slice(0, 3)"
+            :key="review.id"
+            :review="review"
+          />
+          <button
+            v-if="productReviews.length > 3"
+            class="secondary-button"
+            @click="showAllReviews = !showAllReviews"
+          >
+            {{ showAllReviews ? '收起评价' : '查看全部评价' }}
+          </button>
+          <text v-if="!productReviews.length" class="no-reviews">
+            暂无评价，期待买家分享实物体验。
+          </text>
+        </view>
         <view class="description">
           <view class="description-heading">
             <text>商品详情</text>
@@ -227,16 +350,16 @@ function share() {
               <text>{{ product.category }}</text>
             </view>
             <view>
-              <text>包装款式</text>
-              <text>标准版 / 礼盒版</text>
+              <text>可选规格</text>
+              <text>{{ variants.map((sku) => sku.name).join(' / ') }}</text>
             </view>
           </view>
           <text class="description-copy">
-            {{ product.subtitle }}
+            {{ product.description || product.subtitle }}
           </text>
           <image class="description-art" :src="product.cover" mode="widthFix" />
           <view class="description-note">
-            <text>商品图片供展示参考，包装款式以所选规格为准。</text>
+            <text>商品图片供展示参考，款式以所选规格为准。</text>
           </view>
         </view>
         <text class="detail-demo-note">演示商品 · 模拟支付不会产生真实扣款</text>
@@ -263,25 +386,25 @@ function share() {
         <view class="purchase-actions">
           <button
             class="add-button"
-            :disabled="busy || product.stock <= 0 || cartQuantity >= product.stock"
+            :disabled="busy || selectedStock <= 0 || cartQuantity >= selectedStock"
             data-testid="add-to-cart"
             @click="choose('add')"
           >
             {{
-              product.stock <= 0
+              selectedStock <= 0
                 ? '已售罄'
-                : cartQuantity >= product.stock
+                : cartQuantity >= selectedStock
                   ? '已达库存上限'
                   : '加入购物车'
             }}
           </button>
           <button
             class="buy-button"
-            :disabled="busy || (product.stock <= 0 && !pendingPurchase)"
+            :disabled="busy || (selectedStock <= 0 && !pendingPurchase)"
             data-testid="buy-now"
             @click="choose('buy')"
           >
-            {{ pendingPurchase ? '确认支付结果' : product.stock <= 0 ? '已售罄' : '立即购买' }}
+            {{ pendingPurchase ? '确认支付结果' : selectedStock <= 0 ? '已售罄' : '立即购买' }}
           </button>
         </view>
       </view>
@@ -298,33 +421,27 @@ function share() {
             <text
               class="sku-stock stock-hint"
               :class="{
-                'stock-low': product.stock <= LOW_STOCK_LIMIT && product.stock > 0,
-                'stock-empty': product.stock === 0,
+                'stock-low': selectedStock <= LOW_STOCK_LIMIT && selectedStock > 0,
+                'stock-empty': selectedStock === 0,
               }"
               data-testid="sku-stock"
             >
-              {{ stockMessage(product.stock) }}
+              {{ stockMessage(selectedStock) }}
             </text>
           </view>
         </view>
-        <text class="sku-label">包装款式</text>
+        <text class="sku-label">商品规格</text>
         <view class="sku-variants">
           <button
-            :class="{ chosen: variant === 'standard' }"
+            v-for="sku in variants"
+            :key="sku.id"
+            :class="{ chosen: variant === sku.id }"
             :disabled="busy || (sheet === 'buy' && !!pendingPurchase)"
-            data-testid="variant-standard"
-            @click="variant = 'standard'"
+            :data-testid="`variant-${sku.id}`"
+            @click="selectVariant(sku.id)"
           >
-            标准版
-          </button>
-          <button
-            :class="{ chosen: variant === 'gift' }"
-            :disabled="busy || (sheet === 'buy' && !!pendingPurchase)"
-            data-testid="variant-gift"
-            @click="variant = 'gift'"
-          >
-            礼盒版
-            <text>+¥30</text>
+            {{ sku.name }}
+            <text>¥{{ money(sku.price) }}{{ sku.stock === 0 ? ' · 已售罄' : '' }}</text>
           </button>
         </view>
         <view class="quantity-row">
@@ -383,7 +500,7 @@ function share() {
             pendingPurchase && sheet === 'buy'
               ? '确认上次支付结果'
               : maxQuantity <= 0
-                ? product.stock <= 0
+                ? selectedStock <= 0
                   ? '已售罄'
                   : '已达库存上限'
                 : sheet === 'buy'
@@ -420,6 +537,46 @@ function share() {
 </template>
 
 <style scoped>
+.product-reviews {
+  margin-top: 10px;
+  padding: 18px 16px;
+  background: #fff;
+}
+.reviews-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #655079;
+  font-size: 14px;
+  font-weight: 600;
+}
+.no-reviews {
+  display: block;
+  margin-top: 14px;
+  color: #82738f;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.product-video {
+  display: block;
+  width: 100%;
+  height: 220px;
+  margin-top: 12px;
+  background: #201c28;
+  border-radius: 12px;
+}
+.video-heading {
+  font-size: 15px;
+  font-weight: 650;
+}
+.video-error {
+  padding-top: 12px;
+  font-size: 12px;
+  color: #81768b;
+}
+.video-error button {
+  margin-top: 10px;
+}
 .detail-screen {
   background: #f7f6fa;
   padding-bottom: calc(92px + env(safe-area-inset-bottom));
@@ -430,6 +587,13 @@ function share() {
   padding-top: 100%;
   background: #eee7f2;
 }
+.gallery-swiper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
 .detail-cover {
   position: absolute;
   top: 0;
@@ -437,6 +601,24 @@ function share() {
   width: 100%;
   height: 100%;
   display: block;
+}
+.detail-back-anchor {
+  position: fixed;
+  z-index: 40;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 440px;
+  padding-left: 16px;
+  pointer-events: none;
+}
+.detail-back-anchor .gallery-icon {
+  pointer-events: auto;
+}
+.gallery-back-placeholder {
+  width: 36px;
+  height: 36px;
 }
 .gallery-top {
   position: absolute;
@@ -541,7 +723,9 @@ function share() {
   gap: 7px;
   margin-top: 12px;
 }
-.product-tags text {
+.product-tags text,
+.product-tags .detail-tag {
+  margin: 0;
   padding: 4px 8px;
   border-radius: 5px;
   background: #f2edf8;
@@ -778,6 +962,7 @@ function share() {
 }
 .sku-variants {
   display: flex;
+  flex-wrap: wrap;
   gap: 11px;
   margin-top: 12px;
 }

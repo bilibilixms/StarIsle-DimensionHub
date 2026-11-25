@@ -1,5 +1,6 @@
 import { createServer } from 'node:http'
-import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { mkdir, readFile, writeFile, rename, stat } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
@@ -22,6 +23,18 @@ import {
   sessionView,
 } from './demo-auth.mjs'
 import { adminSnapshot, applyAdminCommand } from './demo-admin.mjs'
+import {
+  decodeProductImage,
+  imagePathPattern,
+  normalizeProductImages,
+  normalizeReviewImages,
+} from './demo-images.mjs'
+import {
+  decodeProductVideo,
+  videoPathPattern,
+  normalizeProductVideo,
+  MAX_VIDEO_BASE64,
+} from './demo-videos.mjs'
 
 export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1' }) {
   let store
@@ -73,6 +86,37 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
       }
       state.shops = marketplaceShops(store.marketplace).filter((shop) => shop.id === shopId)
     }
+    const publicUrl = (path) =>
+      imagePathPattern.test(path) || videoPathPattern.test(path)
+        ? `http://${host}:${server.address().port}${path}`
+        : path
+    for (const product of state.products) {
+      product.cover = publicUrl(product.cover)
+      if (product.images) product.images = product.images.map(publicUrl)
+      if (product.video) product.video = publicUrl(product.video)
+    }
+    state.reviews = (store.marketplace.reviews || [])
+      .filter((review) =>
+        role === 'merchant'
+          ? review.shopId === identity.account.shopId
+          : review.buyerId === identity?.account.id ||
+            state.products.some((product) => product.id === review.productId && product.published),
+      )
+      .map((review) => {
+        const { buyerId, orderId, ...visible } = review
+        return {
+          ...visible,
+          ...(role === 'merchant' || buyerId === identity?.account.id ? { orderId } : {}),
+          images: review.images.map(publicUrl),
+          refunded: store.marketplace.orders.some(
+            (order) => order.id === orderId && order.status === '已退款',
+          ),
+        }
+      })
+    for (const order of state.orders) {
+      order.cover = publicUrl(order.cover)
+      for (const item of order.items || []) item.cover = publicUrl(item.cover)
+    }
     return state
   }
   const server = createServer(async (request, response) => {
@@ -95,10 +139,10 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
       if (!allowed) return send(403, { message: '仅支持本地演示来源' })
       response.setHeader('Access-Control-Allow-Origin', origin)
       response.setHeader('Vary', 'Origin')
-      response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+      response.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS')
       response.setHeader(
         'Access-Control-Allow-Headers',
-        'Content-Type, X-Demo-Role, X-Idempotency-Key, Authorization',
+        'Content-Type, X-Demo-Role, X-Idempotency-Key, Authorization, Range',
       )
       response.setHeader('Access-Control-Allow-Private-Network', 'true')
     }
@@ -114,6 +158,76 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
     let identity
     try {
       identity = authenticate(store, request.headers.authorization)
+      const videoId = videoPathPattern.exec(path)?.[1]
+      if (['GET', 'HEAD'].includes(request.method) && videoId) {
+        if (!store.videos?.[videoId]) return send(404, { message: '视频不存在' })
+        const file = resolve(dirname(dataFile), 'uploads', `${videoId}.mp4`)
+        let size
+        try {
+          size = (await stat(file)).size
+        } catch (error) {
+          if (error.code === 'ENOENT') return send(404, { message: '视频不存在' })
+          throw error
+        }
+        let start = 0,
+          end = size - 1
+        const headers = {
+          'Content-Type': 'video/mp4',
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          'X-Content-Type-Options': 'nosniff',
+        }
+        if (request.headers.range) {
+          const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range)
+          if (!range || (!range[1] && !range[2])) {
+            response.writeHead(416, { 'Content-Range': `bytes */${size}` })
+            response.end()
+            return
+          }
+          start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]))
+          end = range[1] && range[2] ? Math.min(size - 1, Number(range[2])) : size - 1
+          if (
+            !Number.isSafeInteger(start) ||
+            !Number.isSafeInteger(end) ||
+            start < 0 ||
+            start > end ||
+            start >= size
+          ) {
+            response.writeHead(416, { 'Content-Range': `bytes */${size}` })
+            response.end()
+            return
+          }
+          headers['Content-Range'] = `bytes ${start}-${end}/${size}`
+        }
+        headers['Content-Length'] = end - start + 1
+        response.writeHead(request.headers.range ? 206 : 200, headers)
+        if (request.method === 'HEAD') {
+          response.end()
+          return
+        }
+        const stream = createReadStream(file, { start, end })
+        stream.on('error', () => response.destroy())
+        response.on('close', () => stream.destroy())
+        stream.pipe(response)
+        return
+      }
+      const imageId = imagePathPattern.exec(path)?.[1]
+      if (request.method === 'GET' && imageId) {
+        if (!store.images?.[imageId]) return send(404, { message: '图片不存在' })
+        try {
+          const image = await readFile(resolve(dirname(dataFile), 'uploads', `${imageId}.jpg`))
+          response.writeHead(200, {
+            'Content-Type': 'image/jpeg',
+            'Cache-Control': 'public, max-age=31536000, immutable',
+            'X-Content-Type-Options': 'nosniff',
+          })
+          response.end(image)
+          return
+        } catch (error) {
+          if (error.code === 'ENOENT') return send(404, { message: '图片不存在' })
+          throw error
+        }
+      }
       if (request.method === 'GET' && path === '/api/demo/auth/session') {
         await queue
         identity = authenticate(store, request.headers.authorization)
@@ -139,9 +253,22 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
       }
       const authAction = /^\/api\/demo\/auth\/(register|login|quick-login|logout)$/.exec(path)?.[1]
       const adminCommand = path === '/api/demo/admin/commands'
+      const reviewImageUpload = path === '/api/demo/review-images'
+      const imageUpload = path === '/api/demo/images' || reviewImageUpload
+      if (reviewImageUpload && (!identity || identity.role !== 'user'))
+        throw new DemoDomainError('请先登录用户账号上传评价图片', identity ? 403 : 401)
+      const videoUpload = path === '/api/demo/videos'
+      if (videoUpload && (!identity || identity.role !== 'merchant'))
+        throw new DemoDomainError('请先登录商家账号上传视频', identity ? 403 : 401)
+      if (imageUpload && !reviewImageUpload && (!identity || identity.role !== 'merchant'))
+        throw new DemoDomainError('请先登录商家账号上传图片', identity ? 403 : 401)
       if (
         request.method !== 'POST' ||
-        (path !== '/api/demo/commands' && !adminCommand && !authAction)
+        (path !== '/api/demo/commands' &&
+          !adminCommand &&
+          !authAction &&
+          !imageUpload &&
+          !videoUpload)
       )
         return send(404, { message: '接口不存在' })
       if (!request.headers['content-type']?.startsWith('application/json'))
@@ -150,7 +277,8 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
       let size = 0
       for await (const chunk of request) {
         size += chunk.length
-        if (size > 65536) return send(413, { message: '请求内容过大' })
+        if (size > (videoUpload ? MAX_VIDEO_BASE64 + 1024 : imageUpload ? 2_850_000 : 65536))
+          return send(413, { message: '请求内容过大' })
         chunks.push(chunk)
       }
       const body = Buffer.concat(chunks).toString('utf8')
@@ -162,6 +290,52 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
       }
       if (!command || typeof command !== 'object' || Array.isArray(command))
         return send(400, { message: '操作内容无效' })
+      if (videoUpload) {
+        const { video, duration } = decodeProductVideo(command.data)
+        const id = await transaction(async () => {
+          const current = authenticate(store, request.headers.authorization)
+          if (!current || current.role !== 'merchant')
+            throw new DemoDomainError('登录已失效，请重新登录', 401)
+          const id = randomUUID()
+          const directory = resolve(dirname(dataFile), 'uploads')
+          await mkdir(directory, { recursive: true })
+          await writeFile(resolve(directory, `${id}.mp4`), video)
+          const next = structuredClone(store)
+          next.videos ||= {}
+          next.videos[id] = { ownerId: current.account.id, duration, size: video.length }
+          await persist(next)
+          store = next
+          return id
+        })
+        return send(200, {
+          url: `http://${host}:${server.address().port}/api/demo/videos/${id}.mp4`,
+          duration,
+        })
+      }
+      if (imageUpload) {
+        const image = await decodeProductImage(command.data)
+        const id = await transaction(async () => {
+          const current = authenticate(store, request.headers.authorization)
+          if (!current || current.role !== (reviewImageUpload ? 'user' : 'merchant'))
+            throw new DemoDomainError('登录已失效，请重新登录', 401)
+          const id = randomUUID()
+          const directory = resolve(dirname(dataFile), 'uploads')
+          await mkdir(directory, { recursive: true })
+          await writeFile(resolve(directory, `${id}.jpg`), image)
+          const next = structuredClone(store)
+          next.images ||= {}
+          next.images[id] = {
+            ownerId: current.account.id,
+            purpose: reviewImageUpload ? 'review' : 'product',
+          }
+          await persist(next)
+          store = next
+          return id
+        })
+        return send(200, {
+          url: `http://${host}:${server.address().port}/api/demo/images/${id}.jpg`,
+        })
+      }
       if (authAction) {
         const result = await transaction(async () => {
           const next = structuredClone(store)
@@ -226,7 +400,15 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
         const orderIds = applyDemoCommand(
           next.marketplace,
           role,
-          command,
+          ['createProduct', 'editProduct'].includes(command.type)
+            ? normalizeProductVideo(
+                normalizeProductImages(command, next, identity.account.id),
+                next,
+                identity.account.id,
+              )
+            : command.type === 'submitReview'
+              ? normalizeReviewImages(command, next, identity.account.id)
+              : command,
           randomUUID,
           identity.actor,
         )

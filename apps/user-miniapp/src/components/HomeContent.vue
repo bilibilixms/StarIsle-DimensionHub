@@ -3,20 +3,48 @@ import { computed, ref, watch } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
 import ProductGrid from './ProductGrid.vue'
-import { DEMO_ASSETS, productShopId, type DemoState } from '@starisle/shared/demo'
+import {
+  DEMO_ASSETS,
+  productShopId,
+  productMatchesSearch,
+  normalizeSearchText,
+  tagKey,
+  type DemoState,
+} from '@starisle/shared/demo'
 
-const props = defineProps<{ state: DemoState; discover: boolean }>()
-const emit = defineEmits<{ refresh: [] }>()
+const props = defineProps<{ state: DemoState; discover: boolean; initialTag?: string }>()
+const emit = defineEmits<{ refresh: []; search: [] }>()
 const category = ref('推荐')
 const priceOrder = ref<'default' | 'asc' | 'desc'>('default')
-const keyword = ref('')
-const query = computed(() => keyword.value.trim().toLowerCase())
+const keyword = ref(props.initialTag ? '#' + props.initialTag : '')
+watch(
+  () => props.initialTag,
+  (value) => {
+    if (value) keyword.value = '#' + value
+  },
+)
+const query = computed(() => normalizeSearchText(keyword.value))
+const exactTag = computed(() => (/^[#＃]/.test(query.value) ? tagKey(query.value) : ''))
+const tagSearch = computed(() => /^[#＃]/.test(query.value))
+function searchTag(tag: string) {
+  keyword.value = '#' + tag
+  uni.pageScrollTo({ scrollTop: 0, duration: 0 })
+}
 const shops = computed(() =>
-  query.value
-    ? props.state.shops.filter((shop) => shop.name.toLowerCase().includes(query.value))
+  query.value && !tagSearch.value
+    ? props.state.shops.filter((shop) => normalizeSearchText(shop.name).includes(query.value))
     : [],
 )
-const matchingShopIds = computed(() => new Set(shops.value.map((shop) => shop.id)))
+function updateSearch(event: unknown) {
+  const value = (event as { detail?: { value?: unknown } }).detail?.value
+  if (typeof value === 'string') keyword.value = value
+}
+function submitSearch(event?: unknown) {
+  updateSearch(event)
+  keyword.value = keyword.value.trim()
+  emit('search')
+}
+
 function shopProducts(id: string) {
   return props.state.products.filter(
     (product) => product.published && productShopId(product) === id,
@@ -45,9 +73,11 @@ const filteredProducts = computed(() =>
         category.value === '推荐' ||
         category.value === '漫展' ||
         product.category === category.value) &&
-      (!query.value ||
-        product.title.toLowerCase().includes(query.value) ||
-        matchingShopIds.value.has(productShopId(product))),
+      productMatchesSearch(
+        product,
+        keyword.value,
+        props.state.shops.find((shop) => shop.id === productShopId(product))?.name || '',
+      ),
   ),
 )
 const products = computed(() =>
@@ -72,18 +102,30 @@ function openShop(id: string) {
       <view class="search-box">
         <Icon name="search" tone="purple" :size="19" />
         <input
-          v-model="keyword"
-          placeholder="搜索商品或商家"
+          :value="keyword"
+          @input="updateSearch"
+          @confirm="submitSearch"
+          placeholder="搜索商品、店铺或 #标签"
           confirm-type="search"
           maxlength="60"
-          aria-label="搜索商品或商家"
+          aria-label="搜索商品、店铺或 #标签"
           data-testid="product-search"
         />
         <button v-if="keyword" class="clear-search" aria-label="清空搜索" @click="keyword = ''">
           ×
         </button>
-        <text v-else class="search-note">商品 / 店铺</text>
+        <button
+          class="search-submit"
+          aria-label="搜索"
+          data-testid="submit-search"
+          @click="submitSearch()"
+        >
+          搜索
+        </button>
       </view>
+    </view>
+    <view v-if="tagSearch && exactTag" class="tag-search-summary" data-testid="tag-search-summary">
+      正在查看 #{{ keyword.trim().replace(/^[#＃]+/, '') }} 的同标签商品
     </view>
     <view v-if="!query" class="category-grid">
       <button
@@ -158,7 +200,9 @@ function openShop(id: string) {
           <text>
             {{
               query
-                ? '搜索结果'
+                ? tagSearch
+                  ? '同标签商品'
+                  : '搜索结果'
                 : category === '画作'
                   ? '收藏画作'
                   : category === '周边'
@@ -190,6 +234,7 @@ function openShop(id: string) {
         :products="products"
         :favorites="state.favorites"
         @refresh="$emit('refresh')"
+        @tag="searchTag"
       />
       <view v-else-if="!shops.length" class="empty-state">
         <Icon name="search" tone="purple" :size="36" />
@@ -262,6 +307,25 @@ function openShop(id: string) {
 </template>
 
 <style scoped>
+.search-submit {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: #8b5cf6;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tag-search-summary {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: #765592;
+  background: #f0eafa;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .home-content {
   padding: 0;
 }

@@ -7,20 +7,23 @@ import BottomNav from '@starisle/ui/BottomNav.vue'
 import Icon from '@starisle/ui/Icon.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
 import OrderItems from '@starisle/user/OrderItems.vue'
+import ProductEditor from './ProductEditor.vue'
+import MerchantReviews from './MerchantReviews.vue'
 import { logoutDemo, openLogin } from '@starisle/shared/auth'
 import {
-  createDemoProduct,
   DEMO_ASSETS,
-  editDemoProduct,
   editDemoShop,
-  getDemoState,
   money,
   resetDemoState,
   shipDemoOrder,
+  resolveDemoRefund,
+  confirmDemoRefundReturn,
+  REFUND_STATUS_LABELS,
   toggleDemoProduct,
   submitShopReview,
   type DemoOrder,
   type DemoProduct,
+  type DemoState,
 } from '@starisle/shared/demo'
 
 const { state, sync, syncError, connected, syncing } = useDemoSync('merchant')
@@ -47,28 +50,42 @@ const activeOrder = computed(
 const carrier = ref('顺丰速运')
 const tracking = ref('')
 const error = ref('')
+const refundReply = ref('')
+const returnAddress = ref({ name: '', phone: '', address: '' })
+const restockReturn = ref(false)
 const productId = ref('')
-const productTitle = ref('')
-const productPrice = ref('')
-const productStock = ref('')
-const originalStock = ref(0)
-const productCover = ref(DEMO_ASSETS.figurine)
+const editingProduct = ref<DemoProduct>()
+const editorBusy = ref(false)
+function productSaved(result: DemoState) {
+  state.value = result
+  sheet.value = ''
+}
 const shopName = ref('')
 const shopDescription = ref('')
 const title = computed(
   () =>
-    ({ home: '商家工作台', products: '商品管理', orders: '订单管理', profile: '我的小店' })[
-      tab.value
-    ] || '商家工作台',
+    ({
+      home: '商家工作台',
+      products: '商品管理',
+      orders: '订单管理',
+      profile: '我的小店',
+      reviews: '评价管理',
+    })[tab.value] || '商家工作台',
 )
 const waiting = computed(
   () => state.value.merchantOrders.filter((order) => order.status === '待发货').length,
+)
+const pendingRefunds = computed(
+  () => state.value.merchantOrders.filter((order) => order.status === '退款中').length,
 )
 const completed = computed(
   () => state.value.merchantOrders.filter((order) => order.status === '已完成').length,
 )
 const revenue = computed(() =>
-  state.value.merchantOrders.reduce((sum, order) => sum + order.amount, 0),
+  state.value.merchantOrders.reduce(
+    (sum, order) => sum + (order.status === '已退款' ? 0 : order.amount),
+    0,
+  ),
 )
 const published = computed(() =>
   canSell.value
@@ -87,8 +104,78 @@ const visibleProducts = computed(() =>
   ),
 )
 function inspectOrder(order: DemoOrder) {
+  refundReply.value = ''
+  returnAddress.value = { name: '', phone: '', address: '' }
+  restockReturn.value = false
+  error.value = ''
   activeOrderId.value = order.id
   sheet.value = 'order'
+}
+async function resolveRefund(approve: boolean) {
+  if (!activeOrder.value || busy.value) return
+  const id = activeOrder.value.id
+  const refundId = activeOrder.value.refund?.id
+  if (approve) {
+    uni.showModal({
+      title:
+        activeOrder.value.refund?.type === 'RETURN_REFUND' ? '同意退货申请' : '同意整单模拟退款',
+      confirmText: '同意退款',
+      content:
+        activeOrder.value.refund?.type === 'RETURN_REFUND'
+          ? '同意后请等待用户寄回商品，确认收货后才会完成模拟退款。'
+          : '确认后完成整单模拟退款。已发货订单不自动恢复库存，不产生实际资金变动。',
+      async success(result) {
+        if (result.confirm) await submitRefund(id, true, refundId)
+      },
+    })
+  } else await submitRefund(id, false, refundId)
+}
+async function submitRefund(id: string, approve: boolean, refundId?: string) {
+  if (busy.value) return
+  busy.value = true
+  error.value = ''
+  try {
+    state.value = await resolveDemoRefund(
+      id,
+      approve,
+      refundReply.value,
+      returnAddress.value,
+      refundId,
+    )
+    uni.showToast({ title: approve ? '售后申请已处理' : '已拒绝退款', icon: 'success' })
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '处理失败，请重试'
+  } finally {
+    busy.value = false
+  }
+}
+function changeRestock(event: Event) {
+  restockReturn.value = (event as Event & { detail: { value: boolean } }).detail.value
+}
+function confirmReturn() {
+  if (!activeOrder.value || busy.value) return
+  const current = activeOrder.value
+  const restock = restockReturn.value
+  uni.showModal({
+    title: '确认收到退货并退款',
+    confirmText: '确认退款',
+    content: restock
+      ? '确认已收到商品并可再次销售，退款后回补对应库存。'
+      : '确认已收到商品，退款后不回补库存。',
+    async success(result) {
+      if (!result.confirm || busy.value) return
+      busy.value = true
+      error.value = ''
+      try {
+        state.value = await confirmDemoRefundReturn(current.id, restock, current.refund?.id)
+        uni.showToast({ title: '模拟退款已完成', icon: 'success' })
+      } catch (cause) {
+        error.value = cause instanceof Error ? cause.message : '处理失败，请重试'
+      } finally {
+        busy.value = false
+      }
+    },
+  })
 }
 function viewWaitingOrders() {
   sheet.value = ''
@@ -130,11 +217,7 @@ function editProduct(product?: DemoProduct) {
     return
   }
   productId.value = product?.id || ''
-  productTitle.value = product?.title || ''
-  productPrice.value = product ? (product.price / 100).toFixed(2) : ''
-  productStock.value = product ? String(product.stock) : ''
-  originalStock.value = product?.stock || 0
-  productCover.value = product?.cover || DEMO_ASSETS.figurine
+  editingProduct.value = product ? JSON.parse(JSON.stringify(product)) : undefined
   error.value = ''
   sheet.value = 'product'
 }
@@ -149,34 +232,6 @@ async function resubmitReview() {
       title: cause instanceof Error ? cause.message : '提交失败，请重试',
       icon: 'none',
     })
-  } finally {
-    busy.value = false
-  }
-}
-async function saveProduct() {
-  if (busy.value) return
-  busy.value = true
-  try {
-    const stockChanged = productStock.value !== String(originalStock.value)
-    state.value = productId.value
-      ? await editDemoProduct(
-          productId.value,
-          productTitle.value,
-          productPrice.value,
-          stockChanged ? productStock.value : undefined,
-          stockChanged ? originalStock.value : undefined,
-        )
-      : await createDemoProduct(
-          productTitle.value,
-          productPrice.value,
-          productStock.value,
-          productCover.value,
-        )
-    sheet.value = ''
-    uni.showToast({ title: productId.value ? '好物已更新' : '新品已上架', icon: 'success' })
-  } catch (cause) {
-    state.value = getDemoState()
-    error.value = cause instanceof Error ? cause.message : '保存失败'
   } finally {
     busy.value = false
   }
@@ -315,7 +370,7 @@ async function toggleProduct(id: string) {
                 {{ money(revenue) }}
               </text>
               <text class="metric-label">有效成交额</text>
-              <text class="metric-detail">模拟支付成功订单</text>
+              <text class="metric-detail">扣除已退款订单</text>
             </view>
             <view>
               <text class="metric-value">{{ published }}</text>
@@ -350,7 +405,7 @@ async function toggleProduct(id: string) {
             <view class="heading-accent" />
             <text>小店待办</text>
           </view>
-          <text class="todo-total">还有 {{ waiting }} 件事等你处理</text>
+          <text class="todo-total">还有 {{ waiting + pendingRefunds }} 件事等你处理</text>
         </view>
         <view class="todo-card">
           <button class="todo-row" @click="orders('待发货')" data-testid="waiting-orders">
@@ -359,10 +414,26 @@ async function toggleProduct(id: string) {
             <text class="todo-count">{{ waiting }}</text>
             <Icon name="chevron-right" :size="13" />
           </button>
+          <button class="todo-row" @click="orders('退款中')" data-testid="refund-orders">
+            <view class="todo-icon pink"><Icon name="receipt" tone="orange" :size="18" /></view>
+            <text>待处理退款</text>
+            <text class="todo-count">
+              {{ pendingRefunds }}
+            </text>
+            <Icon name="chevron-right" :size="13" />
+          </button>
           <button class="todo-row" @click="orders('已完成')">
             <view class="todo-icon pink"><Icon name="receipt" tone="orange" :size="18" /></view>
             <text>已完成订单</text>
             <text class="todo-count pink-count">{{ completed }}</text>
+            <Icon name="chevron-right" :size="13" />
+          </button>
+          <button class="todo-row" data-testid="manage-reviews" @click="changeTab('reviews')">
+            <view class="todo-icon orange"><Icon name="message" tone="orange" :size="18" /></view>
+            <text>评价管理</text>
+            <text class="todo-count">
+              {{ state.reviews.filter((review) => !review.reply).length }}
+            </text>
             <Icon name="chevron-right" :size="13" />
           </button>
           <button class="todo-row" @click="openShop">
@@ -373,6 +444,12 @@ async function toggleProduct(id: string) {
           </button>
         </view>
       </template>
+      <MerchantReviews
+        v-if="tab === 'reviews'"
+        :reviews="state.reviews"
+        @updated="state = $event"
+        @back="tab = 'home'"
+      />
       <view v-if="tab === 'home' || tab === 'orders'" class="orders-section">
         <view class="section-heading">
           <view class="section-heading-title">
@@ -386,7 +463,7 @@ async function toggleProduct(id: string) {
         </view>
         <view class="status-tabs">
           <button
-            v-for="item in ['待发货', '待收货', '已完成', '全部']"
+            v-for="item in ['待发货', '待收货', '退款中', '已退款', '已完成', '全部']"
             :key="item"
             :class="{ selected: status === item }"
             :data-testid="`status-${item}`"
@@ -540,7 +617,7 @@ async function toggleProduct(id: string) {
         <text>小小的店，也装得下大大的热爱。</text>
       </view>
     </view>
-    <BottomNav :current="tab" merchant @change="changeTab" />
+    <BottomNav :current="tab === 'reviews' ? 'home' : tab" merchant @change="changeTab" />
     <Sheet :visible="sheet === 'ship'" title="把心意送出去" @close="sheet = ''">
       <OrderItems v-if="activeOrder" :order="activeOrder" compact />
       <text class="form-label">物流公司</text>
@@ -612,63 +689,130 @@ async function toggleProduct(id: string) {
             <text>{{ activeOrder.tracking }}</text>
           </view>
         </view>
-        <text class="form-note">此订单为演示样例，不包含真实个人或交易信息。</text>
+        <view v-if="activeOrder.refund" data-testid="merchant-refund-record">
+          <view class="order-detail-row">
+            <text>售后进度</text>
+            <text>{{ REFUND_STATUS_LABELS[activeOrder.refund.status] }}</text>
+          </view>
+          <view class="order-detail-row">
+            <text>售后类型</text>
+            <text>{{ activeOrder.refund.type === 'RETURN_REFUND' ? '退货退款' : '仅退款' }}</text>
+          </view>
+          <view class="order-detail-row">
+            <text>退款金额</text>
+            <text>¥{{ money(activeOrder.amount) }}</text>
+          </view>
+          <view class="order-detail-row">
+            <text>退款原因</text>
+            <text>{{ activeOrder.refund.reason }}</text>
+          </view>
+          <view class="order-detail-row">
+            <text>申请时间</text>
+            <text>{{ activeOrder.refund.requestedAt }}</text>
+          </view>
+          <view v-if="activeOrder.refund.reply" class="order-detail-row">
+            <text>处理回复</text>
+            <text>{{ activeOrder.refund.reply }}</text>
+          </view>
+          <template
+            v-if="activeOrder.status === '退款中' && activeOrder.refund.status === 'PENDING'"
+          >
+            <view v-if="activeOrder.refund.type === 'RETURN_REFUND'">
+              <text class="form-note">同意退货前请填写本次退货地址。</text>
+              <input
+                v-model="returnAddress.name"
+                class="refund-field"
+                maxlength="30"
+                placeholder="退货收件人"
+                data-testid="return-recipient"
+              />
+              <input
+                v-model="returnAddress.phone"
+                class="refund-field"
+                maxlength="11"
+                placeholder="退货联系电话"
+                data-testid="return-phone"
+              />
+              <textarea
+                v-model="returnAddress.address"
+                class="refund-input"
+                maxlength="200"
+                placeholder="详细退货地址"
+                data-testid="merchant-return-address"
+              />
+            </view>
+            <textarea
+              v-model="refundReply"
+              class="refund-input"
+              maxlength="200"
+              placeholder="拒绝时请填写原因（最多 200 字）"
+              aria-label="退款处理原因"
+              data-testid="refund-reply"
+            />
+            <button
+              class="primary-button"
+              :disabled="busy"
+              :loading="busy"
+              data-testid="approve-refund"
+              @click="resolveRefund(true)"
+            >
+              {{
+                activeOrder.refund.type === 'RETURN_REFUND'
+                  ? '同意退货，等待寄回'
+                  : '同意整单模拟退款'
+              }}
+            </button>
+            <button
+              class="secondary-button"
+              :disabled="busy || !refundReply.trim()"
+              data-testid="reject-refund"
+              @click="resolveRefund(false)"
+            >
+              拒绝退款
+            </button>
+          </template>
+        </view>
+        <view
+          v-if="activeOrder.status === '退款中' && activeOrder.refund?.status === 'WAIT_RETURN'"
+          class="form-note"
+        >
+          已同意退货，等待用户填写寄回物流。
+        </view>
+        <view
+          v-if="activeOrder.status === '退款中' && activeOrder.refund?.status === 'WAIT_RECEIPT'"
+        >
+          <text class="form-note" data-testid="merchant-return-logistics">
+            退货物流：{{ activeOrder.refund.returnCarrier }} ·
+            {{ activeOrder.refund.returnTracking }}
+          </text>
+          <view class="order-detail-row">
+            <text>商品完好，重新入库</text>
+            <switch :checked="restockReturn" @change="changeRestock" data-testid="restock-return" />
+          </view>
+          <button
+            class="primary-button"
+            :disabled="busy"
+            data-testid="confirm-return-refund"
+            @click="confirmReturn"
+          >
+            确认收到退货并退款
+          </button>
+        </view>
+        <text v-if="error" class="form-error">{{ error }}</text>
+        <text class="form-note">支付、退款和物流均为模拟，不产生实际资金变动。</text>
       </template>
     </Sheet>
     <Sheet
       :visible="sheet === 'product'"
-      :title="productId ? '编辑这份好物' : '让新灵感上岛'"
-      @close="sheet = ''"
+      :title="productId ? '编辑商品' : '发布商品'"
+      @close="!editorBusy && (sheet = '')"
     >
-      <view v-if="!productId" class="cover-choices">
-        <button
-          v-for="cover in [DEMO_ASSETS.figurine, DEMO_ASSETS.hero]"
-          :key="cover"
-          :class="{ chosen: productCover === cover }"
-          @click="productCover = cover"
-        >
-          <image :src="cover" mode="aspectFill" />
-          <text>{{ productCover === cover ? '已选封面' : '选择封面' }}</text>
-        </button>
-      </view>
-      <text class="form-label">商品名称</text>
-      <input
-        v-model="productTitle"
-        class="form-input"
-        placeholder="给这份心意起一个名字"
-        aria-label="商品名称"
-        data-testid="edit-product-title"
-        maxlength="60"
+      <ProductEditor
+        v-if="sheet === 'product'"
+        :product="editingProduct"
+        @busy="editorBusy = $event"
+        @saved="productSaved"
       />
-      <text class="form-label">价格（元）</text>
-      <input
-        v-model="productPrice"
-        class="form-input"
-        type="digit"
-        placeholder="例如 128.00"
-        aria-label="商品价格"
-        data-testid="edit-product-price"
-      />
-      <text class="form-label">库存数量</text>
-      <input
-        v-model="productStock"
-        class="form-input"
-        type="number"
-        placeholder="请输入整数库存"
-        aria-label="商品库存"
-        data-testid="edit-product-stock"
-      />
-      <text v-if="error" class="form-error">{{ error }}</text>
-      <text class="form-note">保存后将同步到用户端商品列表。</text>
-      <button
-        class="primary-button merchant-primary"
-        :disabled="busy"
-        :loading="busy"
-        @click="saveProduct"
-        data-testid="save-product"
-      >
-        {{ productId ? '保存修改' : '发布这份好物' }}
-      </button>
     </Sheet>
     <Sheet :visible="sheet === 'shop'" title="打理你的小店" @close="sheet = ''">
       <text class="form-label">店铺名称</text>
@@ -720,6 +864,23 @@ async function toggleProduct(id: string) {
 </template>
 
 <style scoped>
+.refund-field {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #eee0d2;
+  border-radius: 10px;
+  font-size: 13px;
+}
+.refund-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 90px;
+  padding: 12px;
+  margin: 12px 0;
+  border: 1px solid #eee0d2;
+  border-radius: 10px;
+  font-size: 13px;
+}
 .review-notice {
   margin: 14px 20px 0;
   padding: 15px;
@@ -1037,6 +1198,7 @@ async function toggleProduct(id: string) {
   color: #b09b8b;
 }
 .status-tabs {
+  overflow-x: auto;
   display: flex;
   gap: 20px;
   margin: 3px 0 14px;
@@ -1044,6 +1206,8 @@ async function toggleProduct(id: string) {
   border-bottom: 1px solid #eee7e0;
 }
 .status-tabs button {
+  flex-shrink: 0;
+  white-space: nowrap;
   margin: 0;
   padding: 0;
   color: #b3a398;
@@ -1400,30 +1564,6 @@ async function toggleProduct(id: string) {
   color: #b58e67;
   font-size: 12px;
   line-height: 1.9;
-}
-.cover-choices {
-  display: flex;
-  gap: 12px;
-}
-.cover-choices button {
-  border: 2px solid transparent;
-  background: #faf5ef;
-  border-radius: 12px;
-  margin: 0;
-  padding: 5px;
-  font-size: 10px;
-  color: #bba18d;
-  line-height: 1.5;
-}
-.cover-choices button.chosen {
-  border-color: #deba92;
-}
-.cover-choices image {
-  width: 70px;
-  height: 75px;
-  border-radius: 8px;
-  display: block;
-  margin-bottom: 6px;
 }
 .shop-message {
   display: flex;

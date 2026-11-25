@@ -2,18 +2,34 @@
 import { computed, ref } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
 import OrderItems from './OrderItems.vue'
+import OrderReviews from './OrderReviews.vue'
 import SyncStatus from '@starisle/ui/SyncStatus.vue'
 import { useDemoSync } from '@starisle/ui/useDemoSync'
-import { getDemoState, money, receiveDemoOrder } from '@starisle/shared/demo'
+import {
+  getDemoState,
+  money,
+  receiveDemoOrder,
+  requestDemoRefund,
+  cancelDemoRefund,
+  returnDemoRefund,
+  REFUND_STATUS_LABELS,
+} from '@starisle/shared/demo'
 
 const { state, sync, connected, syncing, syncError } = useDemoSync()
-const props = defineProps<{ id: string }>()
+const props = defineProps<{ id: string; action?: string }>()
 const id = computed(() => props.id)
 const busy = ref(false)
 const actionError = ref('')
+const refundReason = ref('')
+const refundType = ref<'REFUND_ONLY' | 'RETURN_REFUND'>('REFUND_ONLY')
+const returnCarrier = ref('顺丰速运')
+const returnTracking = ref('')
 const statusHeight = uni.getSystemInfoSync().statusBarHeight || 0
 const order = computed(() => state.value.orders.find((order) => order.id === id.value))
 const statusCopy = computed(() => {
+  if (order.value?.status === '退款中')
+    return REFUND_STATUS_LABELS[order.value.refund?.status || 'PENDING']
+  if (order.value?.status === '已退款') return '商家已同意整单模拟退款，没有实际资金变动。'
   if (order.value?.status === '已完成') return '你已确认收货，订单已完成。'
   if (order.value?.status === '待收货') return '商家已发货，请留意下方物流信息。'
   return '模拟支付成功，等待商家发货。'
@@ -22,10 +38,27 @@ const progress = computed(() => {
   if (!order.value) return []
   const current = order.value
   const events = [{ title: '模拟支付成功', time: current.createdAt }]
-  if (current.status !== '待发货')
+  if (current.shippedAt)
     events.push({ title: '商家已发货', time: current.shippedAt || '时间未记录' })
-  if (current.status === '已完成')
+  if (
+    current.completedAt ||
+    current.status === '已完成' ||
+    current.refund?.originalStatus === '已完成'
+  )
     events.push({ title: '确认收货，订单完成', time: current.completedAt || '时间未记录' })
+  for (const refund of [
+    ...(current.refundHistory || []),
+    ...(current.refund ? [current.refund] : []),
+  ]) {
+    events.push({ title: '申请整单退款', time: refund.requestedAt })
+    if (refund.acceptedAt) events.push({ title: '商家同意退货', time: refund.acceptedAt })
+    if (refund.returnedAt) events.push({ title: '用户寄回商品', time: refund.returnedAt })
+    if (refund.resolvedAt)
+      events.push({
+        title: REFUND_STATUS_LABELS[refund.status],
+        time: refund.resolvedAt,
+      })
+  }
   return events.reverse()
 })
 
@@ -41,6 +74,45 @@ function copyNumber() {
 }
 function openProduct(productId: string) {
   uni.navigateTo({ url: `/pages/product/detail?id=${encodeURIComponent(productId)}` })
+}
+async function requestRefund() {
+  if (!order.value || busy.value) return
+  busy.value = true
+  actionError.value = ''
+  try {
+    state.value = await requestDemoRefund(
+      order.value.id,
+      refundReason.value,
+      order.value.status === '待发货' ? 'REFUND_ONLY' : refundType.value,
+    )
+    refundReason.value = ''
+    uni.showToast({ title: '退款申请已提交', icon: 'success' })
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : '申请失败，请重试'
+  } finally {
+    busy.value = false
+  }
+}
+async function returnOrCancel(cancel: boolean) {
+  if (!order.value || busy.value) return
+  busy.value = true
+  actionError.value = ''
+  try {
+    const current = order.value
+    state.value = cancel
+      ? await cancelDemoRefund(current.id, current.refund?.id)
+      : await returnDemoRefund(
+          current.id,
+          returnCarrier.value,
+          returnTracking.value,
+          current.refund?.id,
+        )
+    uni.showToast({ title: cancel ? '售后申请已撤销' : '退货物流已提交', icon: 'success' })
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : '操作失败，请重试'
+  } finally {
+    busy.value = false
+  }
 }
 function receive() {
   if (!order.value || order.value.status !== '待收货' || busy.value) return
@@ -69,7 +141,10 @@ function receive() {
 </script>
 
 <template>
-  <view class="app-screen order-screen">
+  <view
+    class="app-screen order-screen"
+    :class="{ 'shortcut-screen': !!action, 'focus-aftersale': action === 'aftersale' }"
+  >
     <view class="order-nav" :style="{ paddingTop: `${statusHeight}px` }">
       <view class="nav-content">
         <button class="icon-button" aria-label="返回订单" data-testid="order-back" @click="back">
@@ -164,7 +239,7 @@ function receive() {
             <text>发货时间</text>
             <text>{{ order.shippedAt }}</text>
           </view>
-          <view v-if="order.status === '已完成'" class="detail-row">
+          <view v-if="order.completedAt" class="detail-row">
             <text>完成时间</text>
             <text data-testid="order-detail-completed-at">
               {{ order.completedAt || '时间未记录' }}
@@ -175,7 +250,7 @@ function receive() {
           <text class="section-title">订单进度</text>
           <view
             v-for="(event, index) in progress"
-            :key="event.title"
+            :key="index"
             class="progress-event"
             :class="{ latest: index === 0 }"
           >
@@ -188,6 +263,144 @@ function receive() {
         </view>
       </view>
       <view class="order-actions">
+        <view id="order-review-section">
+          <OrderReviews
+            :order="order"
+            :reviews="state.reviews"
+            :auto-open="action === 'review'"
+            @updated="state = $event"
+          />
+        </view>
+        <view v-if="order.refundHistory?.length" class="receipt-section">
+          <text class="section-title">历史售后申请</text>
+          <view v-for="(past, index) in order.refundHistory" :key="past.id || index">
+            <text class="section-note">
+              {{ past.requestedAt }} · {{ REFUND_STATUS_LABELS[past.status] }}
+            </text>
+            <text class="section-note">
+              {{ past.reason }}{{ past.reply ? ' · ' + past.reply : '' }}
+            </text>
+          </view>
+        </view>
+        <view id="order-aftersale-section">
+          <view v-if="order.refund" class="receipt-section" data-testid="refund-record">
+            <text class="section-title">
+              退款记录 ·
+              {{ REFUND_STATUS_LABELS[order.refund.status] }}
+            </text>
+            <text class="section-note">
+              售后类型：{{ order.refund.type === 'RETURN_REFUND' ? '退货退款' : '仅退款' }} · ¥{{
+                money(order.amount)
+              }}
+            </text>
+            <text class="section-note">申请原因：{{ order.refund.reason }}</text>
+            <text v-if="order.refund.reply" class="section-note">
+              商家回复：{{ order.refund.reply }}
+            </text>
+          </view>
+          <view v-if="order.status === '退款中' && order.refund" class="receipt-section">
+            <template v-if="order.refund.status === 'WAIT_RETURN' && order.refund.returnAddress">
+              <text class="section-title">请按商家地址寄回商品</text>
+              <text class="section-note" data-testid="return-address">
+                {{ order.refund.returnAddress.name }} · {{ order.refund.returnAddress.phone }} ·
+                {{ order.refund.returnAddress.address }}
+              </text>
+              <input
+                v-model="returnCarrier"
+                class="refund-field"
+                maxlength="30"
+                placeholder="退货物流公司"
+                aria-label="退货物流公司"
+                data-testid="return-carrier"
+              />
+              <input
+                v-model="returnTracking"
+                class="refund-field"
+                maxlength="24"
+                placeholder="退货物流单号"
+                aria-label="退货物流单号"
+                data-testid="return-tracking"
+              />
+              <button
+                class="primary-button"
+                :disabled="busy || !returnTracking.trim()"
+                data-testid="submit-return"
+                @click="returnOrCancel(false)"
+              >
+                我已寄出，提交物流
+              </button>
+            </template>
+            <text
+              v-if="order.refund.returnTracking"
+              class="section-note"
+              data-testid="return-logistics"
+            >
+              退货物流：{{ order.refund.returnCarrier }} · {{ order.refund.returnTracking }}
+            </text>
+            <button
+              v-if="['PENDING', 'WAIT_RETURN'].includes(order.refund.status)"
+              class="secondary-button list-button"
+              :disabled="busy"
+              data-testid="cancel-refund"
+              @click="returnOrCancel(true)"
+            >
+              撤销售后申请
+            </button>
+          </view>
+          <view
+            v-if="['待发货', '待收货', '已完成'].includes(order.status)"
+            class="receipt-section"
+          >
+            <text class="section-title">
+              {{ order.status === '已完成' ? '申请售后' : '退款 / 售后' }}
+            </text>
+            <view v-if="order.status !== '待发货'" class="refund-types">
+              <button
+                class="secondary-button"
+                :class="{ selected: refundType === 'REFUND_ONLY' }"
+                data-testid="refund-only"
+                @click="refundType = 'REFUND_ONLY'"
+              >
+                仅退款
+              </button>
+              <button
+                class="secondary-button"
+                :class="{ selected: refundType === 'RETURN_REFUND' }"
+                data-testid="return-refund"
+                @click="refundType = 'RETURN_REFUND'"
+              >
+                退货退款
+              </button>
+            </view>
+            <text class="section-note">
+              整单退款金额：¥{{ money(order.amount) }}。{{
+                order.status === '待发货' || refundType === 'REFUND_ONLY'
+                  ? '无需寄回商品，等待商家审核。'
+                  : '商家同意后，按提供的地址寄回商品。'
+              }}
+            </text>
+            <textarea
+              v-model="refundReason"
+              maxlength="200"
+              class="refund-input"
+              placeholder="请填写退款原因（最多 200 字）"
+              aria-label="退款原因"
+              data-testid="refund-reason"
+            />
+            <button
+              class="secondary-button list-button"
+              :disabled="busy || !refundReason.trim()"
+              :loading="busy"
+              data-testid="request-refund"
+              @click="requestRefund"
+            >
+              申请整单模拟退款
+            </button>
+            <text class="section-note">
+              提交后暂停订单履约，等待商家处理；模拟退款不会产生实际资金变动。
+            </text>
+          </view>
+        </view>
         <text v-if="actionError" class="form-error" data-testid="order-detail-error">
           {{ actionError }}
         </text>
@@ -228,6 +441,54 @@ function receive() {
 </template>
 
 <style scoped>
+.shortcut-screen {
+  display: flex;
+  flex-direction: column;
+}
+.shortcut-screen .order-actions {
+  order: 1;
+  display: flex;
+  flex-direction: column;
+}
+.shortcut-screen .receipt {
+  order: 2;
+  padding-bottom: 20px;
+}
+.focus-aftersale #order-aftersale-section {
+  order: -1;
+}
+
+.refund-types {
+  display: flex;
+  gap: 12px;
+  margin: 12px 0;
+}
+.refund-types button {
+  flex: 1;
+}
+.refund-types .selected {
+  border-color: #8b5cf6;
+  background: #f3edff;
+}
+.refund-field {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #e8e0ef;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.refund-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 90px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #e8e0ef;
+  border-radius: 10px;
+  font-size: 13px;
+}
 .order-screen {
   padding-bottom: calc(30px + env(safe-area-inset-bottom));
 }

@@ -2,13 +2,14 @@
 import Icon from '@starisle/ui/Icon.vue'
 import {
   money,
+  productTags,
   toggleFavorite,
   stockMessage,
   LOW_STOCK_LIMIT,
   type DemoProduct,
 } from '@starisle/shared/demo'
 defineProps<{ products: DemoProduct[]; favorites: string[] }>()
-const emit = defineEmits<{ refresh: [] }>()
+const emit = defineEmits<{ refresh: []; tag: [value: string] }>()
 function open(id: string) {
   uni.navigateTo({ url: `/pages/product/detail?id=${encodeURIComponent(id)}` })
 }
@@ -34,11 +35,24 @@ function favorite(id: string) {
           mode="aspectFill"
           :aria-label="product.title"
         />
-        <text v-if="product.tag" class="product-cover-tag">{{ product.tag }}</text>
+        <text v-if="productTags(product).length" class="product-cover-tag">
+          #{{ productTags(product)[0] }}
+        </text>
       </button>
       <view class="product-copy">
         <text class="product-name" @click="open(product.id)">{{ product.title }}</text>
         <text class="product-subtitle">{{ product.subtitle }}</text>
+        <view v-if="productTags(product).length" class="card-tags">
+          <button
+            v-for="tag in productTags(product)"
+            :key="tag"
+            class="card-tag"
+            :aria-label="`查找标签 ${tag}`"
+            @click.stop="$emit('tag', tag)"
+          >
+            #{{ tag }}
+          </button>
+        </view>
         <text
           v-if="product.stock <= LOW_STOCK_LIMIT"
           class="stock-hint"
@@ -68,6 +82,23 @@ function favorite(id: string) {
 </template>
 
 <style scoped>
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+.card-tag {
+  margin: 0;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: #f2edf8;
+  color: #765592;
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
 .product-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

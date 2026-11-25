@@ -16,6 +16,9 @@ const products = computed(() =>
 )
 const cover = computed(() => products.value[0]?.cover || DEMO_ASSETS.figurine)
 const statusHeight = uni.getSystemInfoSync().statusBarHeight || 0
+function searchTag(tag: string) {
+  uni.navigateTo({ url: `/pages/index/index?tab=home&tag=${encodeURIComponent(tag)}` })
+}
 function home() {
   uni.reLaunch({ url: '/pages/index/index' })
 }
@@ -66,6 +69,7 @@ function back() {
           :products="products"
           :favorites="state.favorites"
           @refresh="refresh"
+          @tag="searchTag"
         />
         <view v-else class="empty-state" data-testid="shop-empty">
           <Icon name="bag" tone="purple" :size="38" />

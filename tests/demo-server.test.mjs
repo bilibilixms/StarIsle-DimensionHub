@@ -439,3 +439,224 @@ test('legacy single-product orders keep their original item snapshot without mut
   assert.deepEqual(orderItems(order), [{ ...original, unitPrice: 15800 }])
   assert.deepEqual(order, original)
 })
+
+test('unshipped refunds block shipment, require reasons and restore inventory only once', async (t) => {
+  const app = await fixture(t)
+  const initial = await app.call('merchant')
+  const before = initial.state.products.find((p) => p.id === 'star-fairy')
+  const paid = await app.call('user', checkout())
+  const id = paid.state.orders[0].id
+  assert.equal(
+    (await app.call('merchant', { type: 'requestRefund', id, reason: '不需要了' })).status,
+    403,
+  )
+  assert.equal((await app.call('user', { type: 'requestRefund', id, reason: ' ' })).status, 400)
+  const requested = await app.call('user', { type: 'requestRefund', id, reason: '买错了' })
+  assert.equal(requested.state.orders[0].status, '退款中')
+  assert.equal(
+    (await app.call('merchant', { type: 'ship', id, carrier: '顺丰', tracking: 'SF12345678' }))
+      .status,
+    409,
+  )
+  assert.equal(
+    (await app.call('merchant', { type: 'resolveRefund', id, approve: false, reply: '' })).status,
+    400,
+  )
+  const rejected = await app.call('merchant', {
+    type: 'resolveRefund',
+    id,
+    approve: false,
+    reply: '请核实需求后重新申请',
+  })
+  assert.equal(rejected.state.orders.find((o) => o.id === id).status, '待发货')
+  await app.call('user', { type: 'requestRefund', id, reason: '确认无需购买' })
+  assert.equal((await app.call('user', { type: 'resolveRefund', id, approve: true })).status, 403)
+  const key = randomUUID()
+  const approved = await app.call('merchant', { type: 'resolveRefund', id, approve: true }, key)
+  assert.equal(approved.status, 200)
+  assert.equal(approved.state.orders.find((o) => o.id === id).status, '已退款')
+  const restored = approved.state.products.find((p) => p.id === 'star-fairy')
+  assert.equal(restored.stock, before.stock)
+  assert.equal(restored.sold, before.sold)
+  assert.equal(
+    (await app.call('merchant', { type: 'resolveRefund', id, approve: true }, key)).status,
+    200,
+  )
+  assert.equal(
+    (await app.call('merchant', { type: 'resolveRefund', id, approve: true })).status,
+    409,
+  )
+  await app.restart()
+  const persisted = await app.call('user')
+  assert.equal(persisted.state.orders.find((o) => o.id === id).status, '已退款')
+  assert.equal(
+    (await app.call('user', { type: 'requestRefund', id, reason: '重复申请' })).status,
+    409,
+  )
+})
+
+test('rejected refunds leave stock reserved, permit shipment and reopen after shipment or completion', async (t) => {
+  const app = await fixture(t)
+  const paid = await app.call('user', checkout())
+  const id = paid.state.orders[0].id
+  const stock = paid.state.products.find((p) => p.id === 'star-fairy').stock
+  await app.call('user', { type: 'requestRefund', id, reason: '退款测试' })
+  const rejected = await app.call('merchant', {
+    type: 'resolveRefund',
+    id,
+    approve: false,
+    reply: '请确认订单',
+  })
+  assert.equal(rejected.status, 200)
+  assert.equal(rejected.state.products.find((p) => p.id === 'star-fairy').stock, stock)
+  const shipped = await app.call('merchant', {
+    type: 'ship',
+    id,
+    carrier: '顺丰',
+    tracking: 'SF12345678',
+  })
+  assert.equal(shipped.status, 200)
+  assert.equal(
+    (await app.call('user', { type: 'requestRefund', id, reason: '发货后申请' })).status,
+    200,
+  )
+  assert.equal(
+    (await app.call('merchant', { type: 'resolveRefund', id, approve: false, reply: '核对物流' }))
+      .status,
+    200,
+  )
+  assert.equal((await app.call('user', { type: 'receive', id })).status, 200)
+  const completed = await app.call('user', { type: 'requestRefund', id, reason: '完成后申请' })
+  assert.equal(completed.status, 200)
+  assert.equal(completed.state.orders[0].refund.originalStatus, '已完成')
+})
+
+test('concurrent shipment and refund preserve the actual fulfillment state', async (t) => {
+  const app = await fixture(t)
+  const paid = await app.call('user', checkout())
+  const id = paid.state.orders[0].id
+  const results = await Promise.all([
+    app.call('user', { type: 'requestRefund', id, reason: '并发申请' }),
+    app.call('merchant', { type: 'ship', id, carrier: '顺丰', tracking: 'SF12345678' }),
+  ])
+  assert.equal(results[0].status, 200)
+  assert.ok([200, 409].includes(results[1].status))
+  const state = (await app.call('user')).state
+  assert.equal(state.orders[0].status, '退款中')
+  assert.equal(
+    state.orders[0].refund.originalStatus,
+    results[1].status === 200 ? '待收货' : '待发货',
+  )
+})
+
+for (const original of ['待收货', '已完成']) {
+  test(`${original} refund rejection and cancellation restore original state, refund-only never restocks shipped goods`, async (t) => {
+    const app = await fixture(t)
+    const paid = await app.call('user', checkout())
+    const id = paid.state.orders[0].id
+    await app.call('merchant', { type: 'ship', id, carrier: '顺丰', tracking: 'SF12345678' })
+    if (original === '已完成') await app.call('user', { type: 'receive', id })
+    const stock = paid.state.products.find((p) => p.id === 'star-fairy').stock
+    const first = await app.call('user', { type: 'requestRefund', id, reason: '质量问题' })
+    const firstRefundId = first.state.orders[0].refund.id
+    const rejected = await app.call('merchant', {
+      type: 'resolveRefund',
+      id,
+      approve: false,
+      reply: '请补充说明',
+    })
+    assert.equal(rejected.state.orders[0].status, original)
+    await app.call('user', { type: 'requestRefund', id, reason: '补充说明' })
+    const cancelled = await app.call('user', { type: 'cancelRefund', id })
+    assert.equal(cancelled.state.orders[0].status, original)
+    assert.equal(cancelled.state.orders[0].refundHistory.length, 1)
+    await app.call('user', { type: 'requestRefund', id, reason: '协商退款' })
+    assert.equal(
+      (
+        await app.call('merchant', {
+          type: 'resolveRefund',
+          id,
+          approve: true,
+          refundId: firstRefundId,
+        })
+      ).status,
+      409,
+    )
+    const refunded = await app.call('merchant', { type: 'resolveRefund', id, approve: true })
+    assert.equal(refunded.state.orders[0].status, '已退款')
+    assert.equal(refunded.state.products.find((p) => p.id === 'star-fairy').stock, stock)
+    assert.equal(refunded.state.orders[0].refundHistory.length, 2)
+    if (original === '已完成') assert.ok(refunded.state.orders[0].completedAt)
+    assert.equal(
+      (await app.call('merchant', { type: 'resolveRefund', id, approve: true })).status,
+      409,
+    )
+  })
+}
+
+for (const restock of [true, false]) {
+  test(`return-refund waits for goods, persists return logistics and restock=${restock}`, async (t) => {
+    const app = await fixture(t)
+    const paid = await app.call('user', checkout())
+    const id = paid.state.orders[0].id
+    await app.call('merchant', { type: 'ship', id, carrier: '顺丰', tracking: 'SF12345678' })
+    await app.call('user', { type: 'receive', id })
+    const request = await app.call('user', {
+      type: 'requestRefund',
+      id,
+      reason: '不合适',
+      refundType: 'RETURN_REFUND',
+    })
+    assert.equal(request.status, 200)
+    assert.equal(
+      (await app.call('merchant', { type: 'resolveRefund', id, approve: true })).status,
+      400,
+    )
+    assert.equal(
+      (
+        await app.call('user', {
+          type: 'returnRefund',
+          id,
+          carrier: '顺丰',
+          tracking: 'SF87654321',
+        })
+      ).status,
+      409,
+    )
+    const accepted = await app.call('merchant', {
+      type: 'resolveRefund',
+      id,
+      approve: true,
+      returnAddress: recipient,
+    })
+    assert.equal(accepted.state.orders[0].refund.status, 'WAIT_RETURN')
+    assert.equal(accepted.state.orders[0].status, '退款中')
+    assert.equal(
+      (await app.call('merchant', { type: 'confirmRefundReturn', id, restock })).status,
+      409,
+    )
+    assert.equal(
+      (await app.call('user', { type: 'returnRefund', id, carrier: '顺丰', tracking: 'bad' }))
+        .status,
+      400,
+    )
+    await app.call('user', { type: 'returnRefund', id, carrier: '顺丰', tracking: 'SF87654321' })
+    assert.equal((await app.call('user', { type: 'cancelRefund', id })).status, 409)
+    assert.equal((await app.call('user', { type: 'confirmRefundReturn', id, restock })).status, 403)
+    await app.restart()
+    const persisted = (await app.call('user')).state.orders[0]
+    assert.equal(persisted.refund.status, 'WAIT_RECEIPT')
+    assert.equal(persisted.refund.returnTracking, 'SF87654321')
+    const results = await Promise.all([
+      app.call('merchant', { type: 'confirmRefundReturn', id, restock }),
+      app.call('merchant', { type: 'confirmRefundReturn', id, restock }),
+    ])
+    assert.deepEqual(results.map((r) => r.status).sort(), [200, 409])
+    const done = results.find((r) => r.status === 200).state
+    assert.equal(done.orders[0].status, '已退款')
+    assert.equal(
+      done.products.find((p) => p.id === 'star-fairy').stock,
+      paid.state.products.find((p) => p.id === 'star-fairy').stock + (restock ? 1 : 0),
+    )
+  })
+}
