@@ -3,6 +3,7 @@ import { approveMerchant } from './merchant-approval'
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test'
 import { randomInt, randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
+import { ADMIN_UI_ENABLED } from '../../packages/shared/src/features'
 
 const root = 'http://127.0.0.1:4173/#/'
 const api = 'http://127.0.0.1:8787/api/demo'
@@ -31,8 +32,14 @@ async function register(page: Page, number: string, role = 'user', shop = '') {
 }
 async function login(page: Page, number: string, role = 'user') {
   await page.goto(`${root}pages/auth/index?role=${role}`)
-  await credentials(page, number)
-  await page.getByTestId('auth-submit').click()
+  const response = await page.request.post(`${api}/auth/login`, {
+    data: { role, phone: number, password: '123456' },
+  })
+  expect(response.ok()).toBe(true)
+  await page.evaluate((session) => {
+    localStorage.setItem('starisle.auth.session', JSON.stringify({ type: 'object', data: session }))
+  }, (await response.json()).session)
+  await page.goto(`${root}pages/${role === 'merchant' ? 'merchant' : 'index'}/index`)
   await expect(page.getByTestId(role === 'merchant' ? 'waiting-orders' : 'home-hero')).toBeVisible()
 }
 async function session(page: Page) {
@@ -72,12 +79,12 @@ test.beforeEach(async ({ request }) => {
   )
 })
 
-test('the unified entry shows five roles, keeps future roles closed and limits guest access to users', async ({
+test('the unified entry keeps future roles closed and limits guest access to users', async ({
   page,
 }) => {
   await page.goto(root)
   await expect(page.getByTestId('auth-screen')).toBeVisible()
-  await expect(page.getByTestId('role-admin')).toBeVisible()
+  await expect(page.getByTestId('role-admin')).toHaveCount(ADMIN_UI_ENABLED ? 1 : 0)
   await expect(page.getByTestId('auth-browse')).toBeVisible()
   for (const role of ['artist', 'event']) {
     await page.getByTestId(`role-${role}`).click()
@@ -101,6 +108,23 @@ test('the unified entry shows five roles, keeps future roles closed and limits g
     }
     await page.setViewportSize({ width: 390, height: 844 })
     await page.screenshot({ path: `.tools/previews/auth-${role}.png`, fullPage: true })
+  }
+})
+
+test('the user and merchant previews sign in with their respective default accounts without inputs', async ({
+  page,
+}) => {
+  for (const [port, role, phone, workspace] of [
+    [4173, 'user', '13800000000', 'home-hero'],
+    [4174, 'merchant', '13800000009', 'waiting-orders'],
+  ] as const) {
+    await page.goto(`http://127.0.0.1:${port}/#/`)
+    await page.getByTestId(`role-${role}`).click()
+    await expect(page.getByTestId('auth-phone')).toHaveCount(0)
+    await expect(page.getByTestId('auth-password')).toHaveCount(0)
+    await page.getByTestId('auth-submit').click()
+    await expect(page.getByTestId(workspace)).toBeVisible()
+    expect(await session(page)).toMatchObject({ role, account: { phone } })
   }
 })
 
@@ -138,13 +162,11 @@ test('phone and six-character password validation allows direct registration, pe
   await credentials(page, number)
   await page.getByTestId('auth-submit').click()
   await expect(page.getByTestId('auth-error')).toContainText('已注册此身份')
-  await page.getByTestId('auth-login').click()
-  await credentials(page, number, 'wrong-password')
-  await page.getByTestId('auth-submit').click()
-  await expect(page.getByTestId('auth-error')).toHaveText('手机号或密码不正确')
-  await credentials(page, number)
-  await page.getByTestId('auth-submit').click()
-  await expect(page.getByTestId('home-hero')).toBeVisible()
+  const wrong = await request.post(`${api}/auth/login`, {
+    data: { role: 'user', phone: number, password: 'wrong-password' },
+  })
+  expect(wrong.status()).toBe(401)
+  await login(page, number)
   expect((await session(page)).account.id).toBe(original.account.id)
 })
 
@@ -234,10 +256,8 @@ test('the same account can register a merchant role and enter both roles in one 
   const original = await session(page)
   await page.getByTestId('nav-profile').click()
   await page.getByTestId('switch-role').click()
-  await credentials(page, number)
-  await page.getByTestId('auth-submit').click()
-  await expect(page.getByTestId('auth-error')).toContainText('尚未注册此身份')
   await page.getByTestId('auth-register').click()
+  await credentials(page, number)
   await page.getByTestId('auth-shop').locator('input').fill('新开的星光小店')
   await page.getByTestId('auth-submit').click()
   await expect(page.getByTestId('merchant-qualification')).toBeVisible()
@@ -248,9 +268,9 @@ test('the same account can register a merchant role and enter both roles in one 
   await page.getByTestId('nav-profile').click()
   await expect(page.getByText('新开的星光小店', { exact: true })).toBeVisible()
   await page.getByTestId('switch-role').click()
-  await credentials(page, number)
   await page.getByTestId('auth-submit').click()
   await expect(page.getByTestId('home-hero')).toBeVisible()
+  expect((await session(page)).account.phone).toBe('13800000000')
 })
 
 test('new accounts complete a searched cart purchase, prevent double payment and persist shipment and receipt', async ({

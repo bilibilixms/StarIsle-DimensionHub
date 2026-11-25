@@ -242,8 +242,6 @@ test('a direct store login returns to the store and legacy demo products open th
 }) => {
   await page.goto(`${root}pages/shop/detail?id=demo-shop`)
   await expect(page.getByTestId('auth-screen')).toBeVisible()
-  await page.getByTestId('auth-phone').locator('input').fill('13800000000')
-  await page.getByTestId('auth-password').locator('input').fill('123456')
   await page.getByTestId('auth-submit').click()
   await expect(page.getByTestId('shop-detail-name')).toHaveText('星屿周边馆')
   await expect(page.getByTestId('shop-product-count')).toHaveText('4 款上架商品')

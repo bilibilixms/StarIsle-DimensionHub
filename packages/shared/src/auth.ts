@@ -113,6 +113,16 @@ export function validateDemoCredentials(phone: string, password: string, role: A
   if (!/^1\d{10}$/.test(phone.trim())) throw new Error('请填写 11 位手机号')
   if (password.length < 6 || password.length > 128) throw new Error('密码需为 6–128 位')
 }
+async function startDemoSession(action: string, data: Record<string, unknown>) {
+  const session = await authRequest(action, data)
+  if (!session) throw new Error('登录信息无效，请重试')
+  uni.setStorageSync(sessionKey, session)
+  uni.removeStorageSync(guestKey)
+  return session
+}
+export function loginDemoAccount(role: 'user' | 'merchant') {
+  return startDemoSession('quick-login', { role })
+}
 export async function submitDemoAuth(
   action: 'register' | 'login',
   role: AuthRole,
@@ -129,17 +139,13 @@ export async function submitDemoAuth(
     if (qualificationCode !== DEMO_MERCHANT_VERIFICATION_CODE)
       throw new Error('资质验证码不正确，请输入页面显示的演示验证码')
   }
-  const session = await authRequest(action, {
+  return startDemoSession(action, {
     role,
     ...(role === 'admin' ? { username: phone.trim() } : { phone: phone.trim() }),
     password,
     shopName,
     ...(action === 'register' && role === 'merchant' ? { qualificationCode } : {}),
   })
-  if (!session) throw new Error('登录信息无效，请重试')
-  uni.setStorageSync(sessionKey, session)
-  uni.removeStorageSync(guestKey)
-  return session
 }
 export async function refreshDemoSession(): Promise<DemoSession> {
   const previous = getDemoSession()

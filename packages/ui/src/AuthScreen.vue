@@ -4,6 +4,7 @@ import Icon from './Icon.vue'
 import { DEMO_ASSETS } from '@starisle/shared/demo'
 import {
   submitDemoAuth,
+  loginDemoAccount,
   enterAfterLogin,
   browseAsGuest,
   validateDemoCredentials,
@@ -71,6 +72,11 @@ async function submit() {
   error.value = ''
   busy.value = true
   try {
+    if (mode.value === 'login' && (role.value === 'user' || role.value === 'merchant')) {
+      const session = await loginDemoAccount(role.value)
+      enterAfterLogin(session, props.destination)
+      return
+    }
     validateDemoCredentials(phone.value, password.value, role.value as AuthRole)
     if (merchant.value && mode.value === 'register' && !qualificationStep.value) {
       qualificationStep.value = true
@@ -168,7 +174,7 @@ async function submit() {
         <Icon name="chevron-right" tone="muted" :size="13" />
         <text :class="{ 'current-step': verifying }">2 资质验证</text>
       </view>
-      <template v-if="!verifying">
+      <template v-if="admin || (mode === 'register' && !verifying)">
         <view class="field">
           <text class="field-label">{{ admin ? '管理员账号' : '手机号' }}</text>
           <input
@@ -219,7 +225,7 @@ async function submit() {
           />
         </view>
       </template>
-      <view v-else class="qualification-panel" data-testid="merchant-qualification">
+      <view v-else-if="verifying" class="qualification-panel" data-testid="merchant-qualification">
         <text class="qualification-title">商家资质验证</text>
         <text class="qualification-copy">
           输入演示验证码后提交入驻申请，平台审核通过后即可上架商品。
@@ -290,14 +296,13 @@ async function submit() {
         <Icon name="chevron-right" tone="muted" :size="14" />
       </button>
       <text v-if="admin" class="auth-note">管理员账号由平台预设，不开放自行注册。</text>
-      <text v-else class="auth-note">
+      <text v-else-if="mode === 'register'" class="auth-note">
         {{
           merchant && mode === 'register'
             ? '商家注册需完成模拟资质验证，不发送短信。'
             : '手机号仅校验格式，不发送短信。'
         }}{{ '\n' }}请使用虚构手机号和非日常使用的密码。
       </text>
-      <text v-if="!admin" class="demo-account">已有演示账号：13800000000 / 123456</text>
     </view>
     <view v-else class="coming-soon" data-testid="auth-coming-soon">
       <Icon name="sparkles" tone="purple" :size="32" />
@@ -602,13 +607,6 @@ async function submit() {
   margin-top: 20px;
   font-size: 10px;
   line-height: 1.9;
-  text-align: center;
-  color: #a599b1;
-}
-.demo-account {
-  display: block;
-  margin-top: 8px;
-  font-size: 10px;
   text-align: center;
   color: #a599b1;
 }

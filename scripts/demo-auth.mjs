@@ -3,6 +3,7 @@ import {
   DemoDomainError,
   DEMO_SHOP_ID,
   DEMO_MERCHANT_VERIFICATION_CODE,
+  marketplaceShops,
 } from '../packages/shared/src/demo-domain.ts'
 
 export function passwordDigest(password, salt = randomBytes(16).toString('hex')) {
@@ -75,6 +76,7 @@ export function sessionView(identity) {
   }
 }
 export function applyAuth(store, action, data) {
+  if (action === 'quick-login') return loginDefaultAccount(store, data?.role)
   if (data?.role === 'admin') {
     if (action !== 'login') throw new DemoDomainError('管理员不开放注册', 403)
     const username = typeof data.username === 'string' ? data.username.trim() : ''
@@ -142,6 +144,25 @@ export function applyAuth(store, action, data) {
       throw new DemoDomainError('尚未注册此身份，请先注册', 403)
   }
   return issueSession(store.auth, account, data.role)
+}
+function loginDefaultAccount(store, role) {
+  if (role !== 'user' && role !== 'merchant') throw new DemoDomainError('该身份暂未开放', 403)
+  const phone = role === 'user' ? '13800000000' : '13800000009'
+  const account = store.auth.accounts.find((account) => account.phone === phone)
+  if (!account && role === 'merchant') {
+    const session = applyAuth(store, 'register', {
+      role,
+      phone,
+      password: randomBytes(16).toString('hex'),
+      qualificationCode: DEMO_MERCHANT_VERIFICATION_CODE,
+    })
+    const shop = marketplaceShops(store.marketplace).find(({ id }) => id === session.account.shopId)
+    shop.status = 'ACTIVE'
+    return session
+  }
+  if (account?.disabled) throw new DemoDomainError('账号已被禁用，请联系管理员', 403)
+  if (!account?.roles.includes(role)) throw new DemoDomainError('默认演示账号不可用', 403)
+  return issueSession(store.auth, account, role)
 }
 function issueSession(auth, account, role) {
   for (const [key, session] of Object.entries(auth.sessions))

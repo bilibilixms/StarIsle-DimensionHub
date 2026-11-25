@@ -102,6 +102,42 @@ const checkout = {
   recipient: { name: '测试收货人', phone: '13800000001', address: '上海市 演示路 1 号' },
 }
 
+test('quick login uses the fixed demo accounts and preserves an existing merchant and shop', async (t) => {
+  const app = await fixture(t)
+  const user = await app.call('auth/quick-login', { role: 'user', phone: '13800000009' })
+  assert.equal(user.status, 200)
+  assert.equal(user.session.account.id, 'demo-user')
+  assert.equal(user.session.account.phone, '13800000000')
+  assert.equal((await app.call('auth/quick-login', { role: 'admin' })).status, 403)
+
+  const registered = await app.register('13800000009', 'merchant', 'another-password')
+  const merchant = await app.call('auth/quick-login', { role: 'merchant' })
+  assert.equal(merchant.status, 200)
+  assert.deepEqual(merchant.session.account, registered.session.account)
+
+  const saved = await app.read()
+  saved.auth.accounts.find(({ id }) => id === merchant.session.account.id).disabled = true
+  await app.write(saved)
+  await app.restart()
+  assert.equal((await app.call('auth/quick-login', { role: 'merchant' })).status, 403)
+})
+
+test('first merchant quick login creates one approved shop even for concurrent requests', async (t) => {
+  const app = await fixture(t)
+  const [first, second] = await Promise.all([
+    app.call('auth/quick-login', { role: 'merchant' }),
+    app.call('auth/quick-login', { role: 'merchant' }),
+  ])
+  assert.equal(first.status, 200)
+  assert.equal(second.status, 200)
+  assert.equal(first.session.account.phone, '13800000009')
+  assert.deepEqual(second.session.account, first.session.account)
+  const shop = (await app.call('state', undefined, first.session)).state.shop
+  assert.equal(shop.id, first.session.account.shopId)
+  assert.equal(shop.status, 'ACTIVE')
+  assert.notEqual(shop.id, 'demo-shop')
+})
+
 test('registration validates phone and minimum password, blocks inactive roles and duplicates, and hashes passwords', async (t) => {
   const app = await fixture(t)
   for (const phone of ['123', '23800000000', '', null])

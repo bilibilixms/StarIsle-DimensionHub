@@ -137,7 +137,7 @@ export async function startDemoServer({ dataFile, port = 8787, host = '127.0.0.1
         if (identity && identity.role !== role) throw new DemoDomainError('请登录对应身份', 403)
         return send(200, { state: snapshot(role, identity) })
       }
-      const authAction = /^\/api\/demo\/auth\/(register|login|logout)$/.exec(path)?.[1]
+      const authAction = /^\/api\/demo\/auth\/(register|login|quick-login|logout)$/.exec(path)?.[1]
       const adminCommand = path === '/api/demo/admin/commands'
       if (
         request.method !== 'POST' ||
