@@ -30,7 +30,7 @@ const order = computed(() => state.value.orders.find((order) => order.id === id.
 const statusCopy = computed(() => {
   if (order.value?.status === '退款中')
     return REFUND_STATUS_LABELS[order.value.refund?.status || 'PENDING']
-  if (order.value?.status === '已退款') return '商家已同意整单模拟退款，没有实际资金变动。'
+  if (order.value?.status === '已退款') return '整单模拟退款已完成。'
   if (order.value?.status === '已完成') return '你已确认收货，订单已完成。'
   if (order.value?.status === '待收货') return '商家已发货，请留意下方物流信息。'
   return '模拟支付成功，等待商家发货。'
@@ -283,7 +283,7 @@ function receive() {
             </text>
           </view>
         </view>
-        <view v-if="!springMarketplaceEnabled" id="order-aftersale-section">
+        <view id="order-aftersale-section">
           <view v-if="order.refund" class="receipt-section" data-testid="refund-record">
             <text class="section-title">
               退款记录 ·

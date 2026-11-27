@@ -76,6 +76,24 @@ public class InventoryService {
         return items;
     }
 
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void completeRefund(long shopId, List<RefundLine> items, boolean restock) {
+        // The caller holds the shop lock, as do catalog edits and checkout.
+        for (var item : items) {
+            int updatedSku = jdbc.sql("""
+                    UPDATE catalog_sku s JOIN catalog_product p ON p.id = s.product_id
+                    SET s.stock = s.stock + :added, s.sold = GREATEST(s.sold - :quantity, 0)
+                    WHERE s.id = :sku AND s.product_id = :product AND p.shop_id = :shop
+                    """).param("sku", item.skuId()).param("product", item.productId()).param("shop", shopId)
+                    .param("added", restock ? item.quantity() : 0).param("quantity", item.quantity()).update();
+            jdbc.sql("""
+                    UPDATE catalog_product SET stock = stock + :added, sold = GREATEST(sold - :quantity, 0)
+                    WHERE id = :product AND shop_id = :shop
+                    """).param("added", restock && updatedSku == 1 ? item.quantity() : 0)
+                    .param("quantity", item.quantity()).param("product", item.productId()).param("shop", shopId).update();
+        }
+    }
+
     private Line combine(Line first, Line second) {
         int quantity = first.quantity() + second.quantity();
         if (first.expectedPrice() != second.expectedPrice()
@@ -97,6 +115,8 @@ public class InventoryService {
 
     public record ReservedItem(long productId, long skuId, long shopId, String shopName, String title,
                                String coverUrl, String variant, long unitPrice, int quantity) {}
+
+    public record RefundLine(long productId, long skuId, int quantity) {}
 
     private record Product(long shopId, String title, String coverUrl, String status) {}
 

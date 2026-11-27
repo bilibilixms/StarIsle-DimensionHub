@@ -16,6 +16,8 @@ import javax.imageio.ImageIO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -381,6 +383,126 @@ class ApplicationIntegrationTest {
         var restocked = send("PUT", path, restock, token);
         assertThat(restocked.statusCode()).as(restocked.body()).isEqualTo(200);
         assertThat(stock(product)).isEqualTo(6);
+    }
+
+    @Test
+    void refundBeforeShippingSupportsReapplicationAndRestocksAtMostOnce() throws Exception {
+        var sample = refundableOrder();
+        String refunds = sample.buyerPath() + "/refunds";
+        String onlyRefund = "{\"type\":\"REFUND_ONLY\",\"reason\":\"款式选错\"}";
+        var otherBuyer = register("13800000002", "user").path("token").asString();
+        var otherMerchant = register("13800000008", "merchant").path("token").asString();
+        assertThat(send("POST", refunds, onlyRefund, otherBuyer, "other-buyer-01").statusCode()).isEqualTo(404);
+        assertThat(send("POST", refunds, onlyRefund.replace("REFUND_ONLY", "RETURN_REFUND"), sample.buyer(),
+                "unshipped-return").statusCode()).isEqualTo(400);
+
+        String first = applyRefund(sample, onlyRefund, "request-first");
+        assertThat(applyRefund(sample, onlyRefund, "request-first")).isEqualTo(first);
+        assertThat(send("POST", refunds, onlyRefund.replace("款式选错", "重复申请"), sample.buyer(),
+                "request-first").statusCode()).isEqualTo(409);
+        assertThat(send("POST", refunds, onlyRefund, sample.buyer(), "active-request").statusCode()).isEqualTo(409);
+        assertThat(send("POST", sample.merchantPath() + "/shipment", shipment(), sample.merchant()).statusCode())
+                .isEqualTo(409);
+        assertThat(send("POST", sample.merchantPath() + "/refunds/" + first + "/decision",
+                "{\"approve\":true}", otherMerchant).statusCode()).isEqualTo(404);
+        assertThat(send("POST", refunds + "/" + first + "/cancel", null, sample.buyer()).statusCode()).isEqualTo(200);
+        assertThat(send("POST", refunds + "/" + first + "/cancel", null, sample.buyer()).statusCode()).isEqualTo(200);
+        assertThat(snapshot(sample.buyer()).path("orders").get(0).path("status").asString()).isEqualTo("PAID");
+
+        String second = applyRefund(sample, onlyRefund, "request-second");
+        String decision = sample.merchantPath() + "/refunds/" + second + "/decision";
+        assertThat(send("POST", decision, "{\"approve\":false}", sample.merchant()).statusCode()).isEqualTo(400);
+        assertThat(send("POST", decision, "{\"approve\":false,\"reply\":\"请核对款式\"}", sample.merchant()).statusCode())
+                .isEqualTo(200);
+        assertThat(stock(sample.product())).isEqualTo(2);
+
+        String third = applyRefund(sample, onlyRefund, "request-third");
+        String approve = sample.merchantPath() + "/refunds/" + third + "/decision";
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> send("POST", approve, "{\"approve\":true}", sample.merchant()));
+            var b = executor.submit(() -> send("POST", approve, "{\"approve\":true}", sample.merchant()));
+            var firstDecision = a.get();
+            var secondDecision = b.get();
+            assertThat(firstDecision.statusCode()).as(firstDecision.body()).isEqualTo(200);
+            assertThat(secondDecision.statusCode()).as(secondDecision.body()).isEqualTo(200);
+        }
+        var order = snapshot(sample.buyer()).path("orders").get(0);
+        assertThat(order.path("status").asString()).isEqualTo("REFUNDED");
+        assertThat(order.path("refund").path("status").asString()).isEqualTo("APPROVED");
+        assertThat(order.path("refund").path("restocked").asBoolean()).isTrue();
+        assertThat(order.path("refundHistory").get(0).path("status").asString()).isEqualTo("CANCELLED");
+        assertThat(order.path("refundHistory").get(1).path("status").asString()).isEqualTo("REJECTED");
+        assertThat(snapshot(sample.merchant()).path("orders").get(0).path("status").asString()).isEqualTo("REFUNDED");
+        assertThat(stock(sample.product())).isEqualTo(3);
+        assertThat(send("POST", refunds, onlyRefund, sample.buyer(), "request-fourth").statusCode()).isEqualTo(409);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void returnRefundRequiresLogisticsAndOnlyRestocksWhenSelected(boolean restock) throws Exception {
+        var sample = refundableOrder();
+        assertThat(send("POST", sample.merchantPath() + "/shipment", shipment(), sample.merchant()).statusCode())
+                .isEqualTo(200);
+        if (restock) {
+            assertThat(send("POST", sample.buyerPath() + "/receipt", null, sample.buyer()).statusCode()).isEqualTo(200);
+        }
+        String id = applyRefund(sample, "{\"type\":\"RETURN_REFUND\",\"reason\":\"实物不合适\"}", "return-order");
+        String buyerRefund = sample.buyerPath() + "/refunds/" + id;
+        String merchantRefund = sample.merchantPath() + "/refunds/" + id;
+        assertThat(send("POST", sample.buyerPath() + "/receipt", null, sample.buyer()).statusCode()).isEqualTo(409);
+        assertThat(send("POST", buyerRefund + "/shipment", shipment(), sample.buyer()).statusCode()).isEqualTo(409);
+        assertThat(send("POST", merchantRefund + "/decision", "{\"approve\":true}", sample.merchant()).statusCode())
+                .isEqualTo(400);
+        String accept = """
+                {"approve":true,"returnAddress":{"name":"星屿退货部","phone":"13800000009","address":"上海市星河路 3 号"}}
+                """;
+        assertThat(send("POST", merchantRefund + "/decision", accept, sample.merchant()).statusCode()).isEqualTo(200);
+        var waiting = snapshot(sample.buyer()).path("orders").get(0).path("refund");
+        assertThat(waiting.path("status").asString()).isEqualTo("WAIT_RETURN");
+        assertThat(waiting.path("returnAddress").path("name").asString()).isEqualTo("星屿退货部");
+
+        String receipt = "{\"restock\":" + restock + "}";
+        assertThat(send("POST", merchantRefund + "/receipt", receipt, sample.merchant()).statusCode()).isEqualTo(409);
+        assertThat(send("POST", buyerRefund + "/shipment", shipment(), sample.buyer()).statusCode()).isEqualTo(200);
+        assertThat(send("POST", buyerRefund + "/shipment", shipment(), sample.buyer()).statusCode()).isEqualTo(200);
+        assertThat(send("POST", buyerRefund + "/cancel", null, sample.buyer()).statusCode()).isEqualTo(409);
+        assertThat(send("POST", merchantRefund + "/receipt", receipt, sample.merchant()).statusCode()).isEqualTo(200);
+        assertThat(send("POST", merchantRefund + "/receipt", receipt, sample.merchant()).statusCode()).isEqualTo(200);
+        assertThat(send("POST", merchantRefund + "/receipt", "{\"restock\":" + !restock + "}", sample.merchant())
+                .statusCode()).isEqualTo(409);
+
+        var order = snapshot(sample.buyer()).path("orders").get(0);
+        assertThat(order.path("status").asString()).isEqualTo("REFUNDED");
+        assertThat(order.path("refund").path("originalStatus").asString()).isEqualTo(restock ? "COMPLETED" : "SHIPPED");
+        assertThat(order.path("refund").path("returnTracking").asString()).isEqualTo("SF20261127001");
+        assertThat(stock(sample.product())).isEqualTo(restock ? 3 : 2);
+    }
+
+    private RefundSample refundableOrder() throws Exception {
+        var merchant = register("13800000009", "merchant");
+        String buyer = register("13800000001", "user").path("token").asString();
+        String admin = json.readTree(send("POST", "/api/v1/auth/login",
+                accountForm(ADMIN_PHONE, ADMIN_PASSWORD, "admin"), null).body()).path("data").path("token").asString();
+        var product = publish(merchant, admin, "退款测试");
+        var checkout = checkout(checkoutForm(line(product, 1)), buyer, "sample-order");
+        assertThat(checkout.statusCode()).as(checkout.body()).isEqualTo(200);
+        String id = json.readTree(checkout.body()).path("data").get(0).asString();
+        return new RefundSample(id, buyer, merchant.path("token").asString(), product);
+    }
+
+    private String applyRefund(RefundSample sample, String form, String key) throws Exception {
+        var response = send("POST", sample.buyerPath() + "/refunds", form, sample.buyer(), key);
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        return json.readTree(response.body()).path("data").path("id").asString();
+    }
+
+    private String shipment() {
+        return "{\"carrier\":\"顺丰速运\",\"tracking\":\"SF20261127001\"}";
+    }
+
+    private record RefundSample(String id, String buyer, String merchant, JsonNode product) {
+        String buyerPath() { return "/api/v1/orders/" + id; }
+        String merchantPath() { return "/api/v1/merchant/orders/" + id; }
     }
 
     private HttpResponse<String> uploadImage(String token, byte[] bytes) throws Exception {

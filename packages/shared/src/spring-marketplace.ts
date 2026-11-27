@@ -5,6 +5,7 @@ import {
   type DemoOrderStatus,
   type DemoProduct,
   type DemoRecipient,
+  type DemoRefund,
   type DemoShop,
 } from './demo-domain'
 import { springApiBase, springImageUrl, springRequest } from './spring-api'
@@ -52,6 +53,12 @@ interface OrderItem {
   quantity: number
 }
 
+type FulfillmentStatus = 'PAID' | 'SHIPPED' | 'COMPLETED'
+
+interface Refund extends Omit<DemoRefund, 'originalStatus'> {
+  originalStatus: FulfillmentStatus
+}
+
 interface Order {
   id: string
   shopId: string
@@ -60,13 +67,15 @@ interface Order {
   buyer: string
   recipient: DemoRecipient
   amount: number
-  status: 'PAID' | 'SHIPPED' | 'COMPLETED'
+  status: FulfillmentStatus | 'REFUND_PENDING' | 'REFUNDED'
   carrier: string | null
   tracking: string | null
   createdAt: string
   shippedAt: string | null
   completedAt: string | null
   items: OrderItem[]
+  refund: Refund | null
+  refundHistory: Refund[]
 }
 
 interface Snapshot {
@@ -75,10 +84,31 @@ interface Snapshot {
   orders: Order[]
 }
 
-const statuses: Record<Order['status'], DemoOrderStatus> = {
+const fulfillmentStatuses = {
   PAID: '待发货',
   SHIPPED: '待收货',
   COMPLETED: '已完成',
+} as const
+
+const statuses: Record<Order['status'], DemoOrderStatus> = {
+  ...fulfillmentStatuses,
+  REFUND_PENDING: '退款中',
+  REFUNDED: '已退款',
+}
+
+function optionalTime(value: string | null | undefined): string | undefined {
+  return value ? new Date(value).toLocaleString('zh-CN') : undefined
+}
+
+function refund(entry: Refund): DemoRefund {
+  return {
+    ...entry,
+    originalStatus: fulfillmentStatuses[entry.originalStatus],
+    requestedAt: new Date(entry.requestedAt).toLocaleString('zh-CN'),
+    acceptedAt: optionalTime(entry.acceptedAt),
+    returnedAt: optionalTime(entry.returnedAt),
+    resolvedAt: optionalTime(entry.resolvedAt),
+  }
 }
 
 function cents(price: string): number {
@@ -116,8 +146,10 @@ function order(entry: Order): DemoOrder {
     carrier: entry.carrier || undefined,
     tracking: entry.tracking || undefined,
     createdAt: new Date(entry.createdAt).toLocaleString('zh-CN'),
-    shippedAt: entry.shippedAt ? new Date(entry.shippedAt).toLocaleString('zh-CN') : undefined,
-    completedAt: entry.completedAt ? new Date(entry.completedAt).toLocaleString('zh-CN') : undefined,
+    shippedAt: optionalTime(entry.shippedAt),
+    completedAt: optionalTime(entry.completedAt),
+    refund: entry.refund ? refund(entry.refund) : undefined,
+    refundHistory: entry.refundHistory?.map(refund),
     items,
   }
 }

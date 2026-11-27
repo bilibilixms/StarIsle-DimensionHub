@@ -139,7 +139,7 @@ async function submitRefund(id: string, approve: boolean, refundId?: string) {
       id,
       approve,
       refundReply.value,
-      returnAddress.value,
+      approve && activeOrder.value?.refund?.type === 'RETURN_REFUND' ? returnAddress.value : undefined,
       refundId,
     )
     uni.showToast({ title: approve ? '售后申请已处理' : '已拒绝退款', icon: 'success' })
@@ -414,7 +414,7 @@ async function toggleProduct(id: string) {
             <text class="todo-count">{{ waiting }}</text>
             <Icon name="chevron-right" :size="13" />
           </button>
-          <button v-if="!springMarketplaceEnabled" class="todo-row" @click="orders('退款中')" data-testid="refund-orders">
+          <button class="todo-row" @click="orders('退款中')" data-testid="refund-orders">
             <view class="todo-icon pink"><Icon name="receipt" tone="orange" :size="18" /></view>
             <text>待处理退款</text>
             <text class="todo-count">

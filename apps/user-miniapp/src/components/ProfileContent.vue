@@ -170,7 +170,7 @@ function allReviewed(order: DemoOrder) {
         </text>
         <view class="order-card-actions" @click.stop>
           <button
-            v-if="!springMarketplaceEnabled && ['待发货', '待收货', '已完成', '退款中', '已退款'].includes(order.status)"
+            v-if="['待发货', '待收货', '已完成', '退款中', '已退款'].includes(order.status)"
             class="secondary-button order-card-action"
             :data-testid="`aftersale-${order.id}`"
             @click.stop="openOrder(order.id, 'aftersale')"

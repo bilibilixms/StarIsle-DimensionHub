@@ -32,14 +32,16 @@ public class OrderService {
     private final InventoryService inventory;
     private final AccountService accounts;
     private final ShopService shops;
+    private final RefundService refunds;
     private final ObjectMapper json;
 
     public OrderService(JdbcClient jdbc, InventoryService inventory, AccountService accounts,
-                        ShopService shops, ObjectMapper json) {
+                        ShopService shops, RefundService refunds, ObjectMapper json) {
         this.jdbc = jdbc;
         this.inventory = inventory;
         this.accounts = accounts;
         this.shops = shops;
+        this.refunds = refunds;
         this.json = json;
     }
 
@@ -105,6 +107,9 @@ public class OrderService {
                 SELECT status, carrier, tracking FROM market_order WHERE id = :id AND shop_id = :shop FOR UPDATE
                 """).param("id", orderId).param("shop", shopId).query(ShipmentState.class)
                 .optional().orElseThrow(OrderService::notFound);
+        if ("REFUND_PENDING".equals(order.status()) || "REFUNDED".equals(order.status())) {
+            throw conflict("该订单正在售后或已退款，无法发货");
+        }
         if ("PAID".equals(order.status())) {
             jdbc.sql("""
                     UPDATE market_order SET status = 'SHIPPED', carrier = :carrier, tracking = :tracking,
@@ -132,17 +137,20 @@ public class OrderService {
                 : jdbc.sql("SELECT * FROM market_order WHERE buyer_id = :owner ORDER BY id DESC");
         var orders = query.param("owner", id).query(this::mapOrder).list();
         if (orders.isEmpty()) return orders;
+        var ids = orders.stream().map(order -> Long.parseLong(order.id())).toList();
         var items = jdbc.sql("""
                 SELECT order_id, product_id, sku_id, title, variant, cover_url, unit_price_cents, quantity
                 FROM market_order_item WHERE order_id IN (:ids) ORDER BY id
-                """).param("ids", orders.stream().map(order -> Long.parseLong(order.id())).toList())
+                """).param("ids", ids)
                 .query((row, index) -> new OrderItem(row.getString("order_id"),
                         new OrderView.Item(row.getString("product_id"), row.getString("sku_id"),
                                 row.getString("title"), row.getString("variant"), row.getString("cover_url"),
                                 row.getLong("unit_price_cents"), row.getInt("quantity"))))
                 .list().stream().collect(Collectors.groupingBy(OrderItem::orderId,
                         Collectors.mapping(OrderItem::item, Collectors.toList())));
-        return orders.stream().map(order -> order.withItems(items.get(order.id()))).toList();
+        var afterSales = refunds.forOrders(ids);
+        return orders.stream().map(order -> order.withDetails(items.get(order.id()),
+                afterSales.getOrDefault(Long.parseLong(order.id()), List.of()))).toList();
     }
 
     private OrderView mapOrder(ResultSet row, int index) throws SQLException {
@@ -151,7 +159,7 @@ public class OrderService {
                         row.getString("recipient_name"), row.getString("recipient_phone"), row.getString("recipient_address")),
                 row.getLong("amount_cents"), row.getString("status"), row.getString("carrier"),
                 row.getString("tracking"), instant(row.getTimestamp("created_at")),
-                instant(row.getTimestamp("shipped_at")), instant(row.getTimestamp("completed_at")), List.of());
+                instant(row.getTimestamp("shipped_at")), instant(row.getTimestamp("completed_at")), List.of(), null, List.of());
     }
 
     private static String instant(Timestamp timestamp) {

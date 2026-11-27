@@ -308,8 +308,46 @@ async function sendSpringCommand(command: DemoCommand, token?: string, operation
     case 'receive':
       await springRequest(`/orders/${id}/receipt`, 'POST', token)
       return
+    case 'requestRefund':
+      await springRequest(`/orders/${id}/refunds`, 'POST', token, {
+        type: command.refundType,
+        reason: command.reason,
+      }, operationId)
+      return
+    case 'cancelRefund':
+    case 'returnRefund':
+    case 'resolveRefund':
+    case 'confirmRefundReturn':
+      await sendSpringRefundAction(command, id, token)
+      return
     default:
       throw new DemoRequestError('此操作将在后续接入 Spring Boot', true)
+  }
+}
+
+function sendSpringRefundAction(command: DemoCommand, orderId: string, token?: string) {
+  if (typeof command.refundId !== 'string' || !command.refundId) {
+    throw new DemoRequestError('售后申请已变化，请刷新订单后重试', true)
+  }
+  const path = `/orders/${orderId}/refunds/${encodeURIComponent(command.refundId)}`
+  switch (command.type) {
+    case 'cancelRefund':
+      return springRequest(`${path}/cancel`, 'POST', token)
+    case 'returnRefund':
+      return springRequest(`${path}/shipment`, 'POST', token, {
+        carrier: command.carrier,
+        tracking: command.tracking,
+      })
+    case 'resolveRefund':
+      return springRequest(`/merchant${path}/decision`, 'POST', token, {
+        approve: command.approve,
+        reply: command.reply,
+        returnAddress: command.returnAddress,
+      })
+    case 'confirmRefundReturn':
+      return springRequest(`/merchant${path}/receipt`, 'POST', token, { restock: command.restock })
+    default:
+      throw new DemoRequestError('未知的售后操作', true)
   }
 }
 export async function syncDemoState(): Promise<DemoState> {
