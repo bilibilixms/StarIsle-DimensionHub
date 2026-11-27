@@ -428,7 +428,7 @@ async function toggleProduct(id: string) {
             <text class="todo-count pink-count">{{ completed }}</text>
             <Icon name="chevron-right" :size="13" />
           </button>
-          <button v-if="!springMarketplaceEnabled" class="todo-row" data-testid="manage-reviews" @click="changeTab('reviews')">
+          <button class="todo-row" data-testid="manage-reviews" @click="changeTab('reviews')">
             <view class="todo-icon orange"><Icon name="message" tone="orange" :size="18" /></view>
             <text>评价管理</text>
             <text class="todo-count">

@@ -82,6 +82,7 @@ export interface DemoRecipient {
 }
 export type DemoOrderStatus = '待发货' | '待收货' | '已完成' | '退款中' | '已退款'
 export interface DemoOrderItem {
+  orderItemId?: string
   productId: string
   title: string
   cover: string
@@ -107,14 +108,15 @@ export interface DemoReview {
   createdAt: string
   reply?: { content: string; createdAt: string }
 }
-export type DemoReviewView = Omit<DemoReview, 'buyerId' | 'orderId'> & {
+export type DemoReviewView = Omit<DemoReview, 'buyerId' | 'orderId' | 'itemKey'> & {
   orderId?: string
+  itemKey?: string
   refunded?: boolean
 }
 export function reviewItemKey(
-  item: Pick<DemoOrderItem, 'productId' | 'skuId' | 'variant'>,
+  item: Pick<DemoOrderItem, 'orderItemId' | 'productId' | 'skuId' | 'variant'>,
 ): string {
-  return JSON.stringify([item.productId, item.skuId || item.variant])
+  return item.orderItemId || JSON.stringify([item.productId, item.skuId || item.variant])
 }
 export interface DemoRefund {
   id?: string
@@ -188,6 +190,7 @@ export interface DemoMarketplace {
   shop: Omit<DemoShop, 'id'>
   shops?: DemoShop[]
 }
+export type DemoMarketplaceView = Omit<DemoMarketplace, 'reviews'> & { reviews?: DemoReviewView[] }
 export interface DemoShop {
   id: string
   name: string

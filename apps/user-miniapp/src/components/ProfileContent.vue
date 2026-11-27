@@ -4,7 +4,7 @@ import Icon from '@starisle/ui/Icon.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
 import AddressEditor from './AddressEditor.vue'
 import OrderItems from './OrderItems.vue'
-import { getDemoSession, logoutDemo, openLogin, springMarketplaceEnabled } from '@starisle/shared/auth'
+import { getDemoSession, logoutDemo, openLogin } from '@starisle/shared/auth'
 import {
   DEMO_ASSETS,
   money,
@@ -184,7 +184,7 @@ function allReviewed(order: DemoOrder) {
             }}
           </button>
           <button
-            v-if="!springMarketplaceEnabled && (order.status === '已完成' || hasReviews(order))"
+            v-if="order.status === '已完成' || hasReviews(order)"
             class="secondary-button order-card-action review-action"
             :data-testid="`review-order-${order.id}`"
             @click.stop="openOrder(order.id, 'review')"

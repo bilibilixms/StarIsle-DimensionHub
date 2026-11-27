@@ -15,6 +15,6 @@ public record OrderView(String id, String shopId, String shopName, String buyerI
 
     public record Recipient(String name, String phone, String address) {}
 
-    public record Item(String productId, String skuId, String title, String variant, String coverUrl,
+    public record Item(String orderItemId, String productId, String skuId, String title, String variant, String coverUrl,
                        long unitPrice, int quantity) {}
 }

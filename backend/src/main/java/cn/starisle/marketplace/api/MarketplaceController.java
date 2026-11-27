@@ -5,6 +5,8 @@ import cn.starisle.catalog.internal.ProductQuery;
 import cn.starisle.identity.api.CurrentAccount;
 import cn.starisle.order.api.OrderView;
 import cn.starisle.order.internal.OrderService;
+import cn.starisle.review.api.ReviewView;
+import cn.starisle.review.internal.ReviewService;
 import cn.starisle.shared.api.ApiResponse;
 import cn.starisle.shop.api.ShopService;
 import cn.starisle.shop.api.ShopService.ShopProfile;
@@ -23,11 +25,13 @@ public class MarketplaceController {
     private final ProductQuery products;
     private final ShopService shops;
     private final OrderService orders;
+    private final ReviewService reviews;
 
-    public MarketplaceController(ProductQuery products, ShopService shops, OrderService orders) {
+    public MarketplaceController(ProductQuery products, ShopService shops, OrderService orders, ReviewService reviews) {
         this.products = products;
         this.shops = shops;
         this.orders = orders;
+        this.reviews = reviews;
     }
 
     @GetMapping("/api/v1/marketplace")
@@ -41,12 +45,15 @@ public class MarketplaceController {
             var shop = shops.ownedProfile(account.id())
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "尚未开通店铺"));
             long shopId = Long.parseLong(shop.id());
-            return ApiResponse.ok(new Snapshot(products.marketplace(shopId), List.of(shop), orders.marketplace(shopId, true)));
+            return ApiResponse.ok(new Snapshot(products.marketplace(shopId), List.of(shop), orders.marketplace(shopId, true),
+                    reviews.marketplace(null, shopId)));
         }
-        var purchases = account != null && "user".equals(account.role())
-                ? orders.marketplace(account.id(), false) : List.<OrderView>of();
-        return ApiResponse.ok(new Snapshot(products.marketplace(null), shops.activeProfiles(), purchases));
+        Long buyerId = account != null && "user".equals(account.role()) ? account.id() : null;
+        var purchases = buyerId == null ? List.<OrderView>of() : orders.marketplace(buyerId, false);
+        return ApiResponse.ok(new Snapshot(products.marketplace(null), shops.activeProfiles(), purchases,
+                reviews.marketplace(buyerId, null)));
     }
 
-    public record Snapshot(List<ProductDetail> products, List<ShopProfile> shops, List<OrderView> orders) {}
+    public record Snapshot(List<ProductDetail> products, List<ShopProfile> shops, List<OrderView> orders,
+                           List<ReviewView> reviews) {}
 }

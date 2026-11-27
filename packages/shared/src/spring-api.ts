@@ -6,7 +6,7 @@ export const springApiBase = (import.meta.env.VITE_SPRING_API_BASE_URL || 'http:
   '',
 )
 
-export function springImageUrl(path: string): string {
+export function springMediaUrl(path: string): string {
   return path.startsWith('/api/v1/images/') ? `${springApiBase}${path}` : path
 }
 

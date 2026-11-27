@@ -1,36 +1,6 @@
 import { demoApiBase, getDemoSession, clearDemoSession, openLogin } from './auth'
-import { springApiBase, springImageUrl, springMarketplaceEnabled } from './spring-api'
-
-function uploadSpringImage(path: string, token: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    uni.uploadFile({
-      url: `${springApiBase}/api/v1/merchant/product-images`,
-      filePath: path,
-      name: 'file',
-      header: { Authorization: `Bearer ${token}` },
-      timeout: 15000,
-      success(response) {
-        let body: { code?: number; data?: { url?: string }; message?: string } = {}
-        try {
-          body = JSON.parse(response.data) || {}
-        } catch {
-          reject(new Error('图片上传失败，请检查服务后重试'))
-          return
-        }
-        if (response.statusCode === 201 && body.code === 0 && body.data?.url) {
-          resolve(springImageUrl(body.data.url))
-          return
-        }
-        if (response.statusCode === 401 && getDemoSession()?.token === token) {
-          clearDemoSession()
-          openLogin('merchant')
-        }
-        reject(new Error(body.message || '图片上传失败，请重试'))
-      },
-      fail: () => reject(new Error('图片上传失败，请检查 Spring Boot 服务后重试')),
-    })
-  })
-}
+import { springMarketplaceEnabled } from './spring-api'
+import { uploadSpringMedia } from './spring-media'
 
 export async function uploadProductImage(
   path: string,
@@ -40,7 +10,8 @@ export async function uploadProductImage(
   const role = purpose === 'review' ? 'user' : 'merchant'
   if (session?.role !== role)
     throw new Error(purpose === 'review' ? '请先登录用户账号' : '请先登录商家账号')
-  if (springMarketplaceEnabled && purpose === 'product') return uploadSpringImage(path, session.token)
+  if (springMarketplaceEnabled)
+    return uploadSpringMedia(path, session.token, purpose === 'review' ? 'reviewImage' : 'productImage')
   let data = ''
   // #ifdef H5
   const blob = await fetch(path).then((response) => response.blob())

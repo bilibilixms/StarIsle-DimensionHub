@@ -1,14 +1,15 @@
 import {
   DEMO_ASSETS,
-  type DemoMarketplace,
+  type DemoMarketplaceView,
   type DemoOrder,
   type DemoOrderStatus,
   type DemoProduct,
   type DemoRecipient,
   type DemoRefund,
+  type DemoReviewView,
   type DemoShop,
 } from './demo-domain'
-import { springApiBase, springImageUrl, springRequest } from './spring-api'
+import { springApiBase, springMediaUrl, springRequest } from './spring-api'
 
 interface CatalogSku {
   id: string
@@ -44,6 +45,7 @@ interface ShopProfile {
 }
 
 interface OrderItem {
+  orderItemId: string
   productId: string
   skuId: string
   title: string
@@ -82,6 +84,7 @@ interface Snapshot {
   products: CatalogProduct[]
   shops: ShopProfile[]
   orders: Order[]
+  reviews: DemoReviewView[]
 }
 
 const fulfillmentStatuses = {
@@ -119,8 +122,8 @@ function cents(price: string): number {
 function product({ skus, coverUrl, status, ...entry }: CatalogProduct): DemoProduct {
   return {
     ...entry,
-    cover: coverUrl ? springImageUrl(coverUrl) : DEMO_ASSETS.figurine,
-    images: entry.images.map(springImageUrl),
+    cover: coverUrl ? springMediaUrl(coverUrl) : DEMO_ASSETS.figurine,
+    images: entry.images.map(springMediaUrl),
     price: cents(entry.price),
     published: status === 'PUBLISHED',
     tag: entry.tags[0] || '',
@@ -131,7 +134,7 @@ function product({ skus, coverUrl, status, ...entry }: CatalogProduct): DemoProd
 function order(entry: Order): DemoOrder {
   const items = entry.items.map(({ coverUrl, ...item }) => ({
     ...item,
-    cover: coverUrl ? springImageUrl(coverUrl) : DEMO_ASSETS.figurine,
+    cover: coverUrl ? springMediaUrl(coverUrl) : DEMO_ASSETS.figurine,
     amount: item.unitPrice * item.quantity,
   }))
   const first = items[0]!
@@ -155,7 +158,7 @@ function order(entry: Order): DemoOrder {
 }
 
 let snapshotRevision = 0
-export async function loadSpringMarketplace(token?: string): Promise<DemoMarketplace> {
+export async function loadSpringMarketplace(token?: string): Promise<DemoMarketplaceView> {
   const revision = (snapshotRevision = Math.max(snapshotRevision + 1, Date.now()))
   const snapshot = await springRequest<Snapshot>('/marketplace', 'GET', token)
   const shops = snapshot.shops.map(
@@ -169,5 +172,14 @@ export async function loadSpringMarketplace(token?: string): Promise<DemoMarketp
     shop: shops[0] || { name: '星屿', description: '' },
     products: snapshot.products.map(product),
     orders: snapshot.orders.map(order),
+    reviews: (snapshot.reviews || []).map((review) => ({
+      ...review,
+      images: review.images.map(springMediaUrl),
+      createdAt: new Date(review.createdAt).toLocaleString('zh-CN'),
+      reply: review.reply ? {
+        content: review.reply.content,
+        createdAt: new Date(review.reply.createdAt).toLocaleString('zh-CN'),
+      } : undefined,
+    })),
   }
 }

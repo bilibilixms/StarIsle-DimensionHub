@@ -478,6 +478,99 @@ class ApplicationIntegrationTest {
         assertThat(stock(sample.product())).isEqualTo(restock ? 3 : 2);
     }
 
+    @Test
+    void reviewsRequireReceiptAndKeepImagesRepliesAndPurchasePrivacy() throws Exception {
+        var sample = refundableOrder();
+        String buyer = sample.buyer();
+        String merchant = sample.merchant();
+        String otherBuyer = register("13800000002", "user").path("token").asString();
+        String otherMerchant = register("13800000008", "merchant").path("token").asString();
+        String itemId = snapshot(buyer).path("orders").get(0).path("items").get(0).path("orderItemId").asString();
+        String endpoint = sample.buyerPath() + "/items/" + itemId + "/review";
+        String plain = "{\"rating\":4,\"content\":\"实物做工细致\"}";
+        assertThat(send("POST", endpoint, plain, buyer, "review-post-01").statusCode()).isEqualTo(409);
+        assertThat(send("POST", endpoint, plain, otherBuyer, "review-post-01").statusCode()).isEqualTo(404);
+        assertThat(send("POST", sample.merchantPath() + "/shipment", shipment(), merchant).statusCode()).isEqualTo(200);
+        assertThat(send("POST", endpoint, plain, buyer, "review-post-01").statusCode()).isEqualTo(409);
+        assertThat(send("POST", sample.buyerPath() + "/receipt", null, buyer).statusCode()).isEqualTo(200);
+        assertThat(send("POST", endpoint, plain.replace(":4,", ":4.5,"), buyer, "review-post-01").statusCode())
+                .isEqualTo(400);
+
+        var png = new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(24, 24, BufferedImage.TYPE_INT_RGB), "png", png);
+        String upload = "/api/v1/orders/review-images";
+        assertThat(uploadMedia(upload, merchant, png.toByteArray()).statusCode()).isEqualTo(403);
+        var ownImage = uploadMedia(upload, buyer, png.toByteArray());
+        assertThat(ownImage.statusCode()).as(ownImage.body()).isEqualTo(201);
+        String url = json.readTree(ownImage.body()).path("data").path("url").asString();
+        var someoneElsesImage = uploadMedia(upload, otherBuyer, png.toByteArray());
+        assertThat(someoneElsesImage.statusCode()).isEqualTo(201);
+        String otherUrl = json.readTree(someoneElsesImage.body()).path("data").path("url").asString();
+        String photoReview = """
+                {"rating":4,"content":"实物做工细致","images":["%s"]}
+                """;
+        assertThat(send("POST", endpoint, photoReview.formatted(otherUrl), buyer, "review-post-01").statusCode())
+                .isEqualTo(403);
+        var productImage = uploadImage(merchant, png.toByteArray());
+        assertThat(productImage.statusCode()).isEqualTo(201);
+        String productUrl = json.readTree(productImage.body()).path("data").path("url").asString();
+        assertThat(send("POST", endpoint, photoReview.formatted(productUrl), buyer, "review-post-01").statusCode())
+                .isEqualTo(403);
+        String draft = """
+                {"title":"图片用途检查","images":["%s"],"skus":[{"name":"测试款","price":"19.90","stock":3}]}
+                """.formatted(url);
+        assertThat(send("POST", "/api/v1/merchant/products", draft, merchant).statusCode()).isEqualTo(403);
+
+        String reviewId;
+        String form = photoReview.formatted(uri(url));
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var one = executor.submit(() -> send("POST", endpoint, form, buyer, "review-post-01"));
+            var two = executor.submit(() -> send("POST", endpoint, form, buyer, "review-post-01"));
+            var first = one.get();
+            var replay = two.get();
+            assertThat(first.statusCode()).as(first.body()).isEqualTo(200);
+            assertThat(replay.statusCode()).as(replay.body()).isEqualTo(200);
+            reviewId = json.readTree(first.body()).path("data").asString();
+            assertThat(json.readTree(replay.body()).path("data").asString()).isEqualTo(reviewId);
+        }
+        assertThat(send("POST", endpoint, plain, buyer, "review-post-02").statusCode()).isEqualTo(409);
+        assertThat(send("POST", endpoint, plain, buyer, "review-post-01").statusCode()).isEqualTo(409);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM product_review").query(Integer.class).single()).isEqualTo(1);
+
+        var publicReview = snapshot(null).path("reviews").get(0);
+        assertThat(publicReview.path("author").asString()).isEqualTo("星***1");
+        assertThat(publicReview.path("images").get(0).asString()).isEqualTo(url);
+        assertThat(get(url).statusCode()).isEqualTo(200);
+        assertThat(publicReview.has("orderId")).isFalse();
+        assertThat(publicReview.has("itemKey")).isFalse();
+        assertThat(publicReview.has("buyerId")).isFalse();
+        assertThat(snapshot(buyer).path("reviews").get(0).path("orderId").asString()).isEqualTo(sample.id());
+        assertThat(snapshot(buyer).path("reviews").get(0).path("itemKey").asString()).isEqualTo(itemId);
+        assertThat(snapshot(otherBuyer).path("reviews").get(0).has("orderId")).isFalse();
+        assertThat(snapshot(otherMerchant).path("reviews").size()).isZero();
+
+        String replyPath = "/api/v1/merchant/reviews/" + reviewId + "/reply";
+        String reply = "{\"content\":\"谢谢你的反馈\"}";
+        assertThat(send("POST", replyPath, reply, otherMerchant, "reply-post-01").statusCode()).isEqualTo(404);
+        var replied = send("POST", replyPath, reply, merchant, "reply-post-01");
+        assertThat(replied.statusCode()).as(replied.body()).isEqualTo(200);
+        assertThat(send("POST", replyPath, reply, merchant, "reply-post-01").statusCode()).isEqualTo(200);
+        assertThat(send("POST", replyPath, reply, merchant, "reply-post-02").statusCode()).isEqualTo(409);
+        assertThat(snapshot(null).path("reviews").get(0).path("reply").path("content").asString())
+                .isEqualTo("谢谢你的反馈");
+
+        String refundId = applyRefund(sample, "{\"type\":\"REFUND_ONLY\",\"reason\":\"售后测试\"}", "review-refund-01");
+        assertThat(send("POST", sample.merchantPath() + "/refunds/" + refundId + "/decision",
+                "{\"approve\":true}", merchant).statusCode()).isEqualTo(200);
+        assertThat(snapshot(null).path("reviews").get(0).path("refunded").asBoolean()).isTrue();
+        assertThat(send("POST", endpoint, form, buyer, "review-post-01").statusCode()).isEqualTo(200);
+        assertThat(send("PUT", "/api/v1/merchant/products/" + sample.product().path("id").asString() + "/publication",
+                "{\"published\":false}", merchant).statusCode()).isEqualTo(200);
+        assertThat(snapshot(null).path("reviews").size()).isZero();
+        assertThat(snapshot(buyer).path("reviews").get(0).path("id").asString()).isEqualTo(reviewId);
+        assertThat(snapshot(merchant).path("reviews").get(0).path("id").asString()).isEqualTo(reviewId);
+    }
+
     private RefundSample refundableOrder() throws Exception {
         var merchant = register("13800000009", "merchant");
         String buyer = register("13800000001", "user").path("token").asString();
@@ -506,11 +599,15 @@ class ApplicationIntegrationTest {
     }
 
     private HttpResponse<String> uploadImage(String token, byte[] bytes) throws Exception {
-        String boundary = "starisle-test-image-boundary";
-        String prefix = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test-image\""
+        return uploadMedia("/api/v1/merchant/product-images", token, bytes);
+    }
+
+    private HttpResponse<String> uploadMedia(String path, String token, byte[] bytes) throws Exception {
+        String boundary = "starisle-test-media-boundary";
+        String prefix = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test-upload\""
                 + "\r\nContent-Type: application/octet-stream\r\n\r\n";
         byte[] end = ("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8);
-        return client.send(HttpRequest.newBuilder(uri("/api/v1/merchant/product-images"))
+        return client.send(HttpRequest.newBuilder(uri(path))
                 .header("Authorization", "Bearer " + token)
                 .header("Content-Type", "multipart/form-data; boundary=" + boundary)
                 .POST(HttpRequest.BodyPublishers.ofByteArrays(List.of(prefix.getBytes(StandardCharsets.UTF_8), bytes, end)))

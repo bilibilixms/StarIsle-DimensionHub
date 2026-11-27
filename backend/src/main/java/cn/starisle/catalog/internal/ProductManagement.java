@@ -1,5 +1,6 @@
 package cn.starisle.catalog.internal;
 
+import cn.starisle.catalog.api.CatalogImages;
 import cn.starisle.catalog.api.MerchantProduct;
 import cn.starisle.catalog.api.MerchantProductController.CreateProduct;
 import cn.starisle.catalog.api.MerchantProductController.CreateSku;
@@ -29,10 +30,10 @@ public class ProductManagement {
     private final JdbcClient jdbc;
     private final ShopService shops;
     private final ProductQuery products;
-    private final ProductImages images;
+    private final CatalogImages images;
     private final ObjectMapper json;
 
-    public ProductManagement(JdbcClient jdbc, ShopService shops, ProductQuery products, ProductImages images,
+    public ProductManagement(JdbcClient jdbc, ShopService shops, ProductQuery products, CatalogImages images,
                              ObjectMapper json) {
         this.jdbc = jdbc;
         this.shops = shops;
@@ -203,8 +204,8 @@ public class ProductManagement {
 
     private Gallery gallery(long shopId, List<String> requestedImages, String requestedCover) {
         var gallery = requestedImages == null ? List.<String>of()
-                : requestedImages.stream().map(value -> images.normalize(value, shopId)).toList();
-        String cover = images.normalize(requestedCover, shopId);
+                : requestedImages.stream().map(value -> images.normalizeProduct(value, shopId)).toList();
+        String cover = images.normalizeProduct(requestedCover, shopId);
         return new Gallery(cover == null && !gallery.isEmpty() ? gallery.getFirst() : cover, gallery);
     }
 

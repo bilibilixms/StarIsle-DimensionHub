@@ -5,7 +5,6 @@ import OrderItems from './OrderItems.vue'
 import OrderReviews from './OrderReviews.vue'
 import SyncStatus from '@starisle/ui/SyncStatus.vue'
 import { useDemoSync } from '@starisle/ui/useDemoSync'
-import { springMarketplaceEnabled } from '@starisle/shared/auth'
 import {
   getDemoState,
   money,
@@ -264,7 +263,7 @@ function receive() {
         </view>
       </view>
       <view class="order-actions">
-        <view v-if="!springMarketplaceEnabled" id="order-review-section">
+        <view id="order-review-section">
           <OrderReviews
             :order="order"
             :reviews="state.reviews"

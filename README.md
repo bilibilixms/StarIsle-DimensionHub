@@ -144,12 +144,14 @@ CI=true VITE_MARKETPLACE_BACKEND=spring ./scripts/npm.sh run dev:merchant:h5
 
 Spring Boot 版支持整单仅退款和退货退款。待发货订单获批后回补原规格库存，已发货订单的仅退款只冲减销量，退货退款由商家确认收货时选择是否回补库存。撤销和驳回会恢复原订单状态，保留历史售后记录。退款为模拟操作。
 
+确认收货后，买家可按订单明细发布星级、文字和最多 3 张图片，商家可回复本店评价。商品详情展示评分和脱敏昵称。退款保留已发布的评价，并标记交易已退款。
+
 商家可上传最多 6 张 JPG、PNG 或 WebP 静态图片，每张不超过 2 MB。图片经后端处理后保存在 `.tools/spring-uploads/`，可通过 `STARISLE_PRODUCT_IMAGE_DIR` 修改路径。MySQL 保存图片归属和商品引用。历史订单保留成交时的商品图片、价格和规格。
 
 如果 Windows 无法访问 WSL 内的 Java 服务，可在启动 Spring Boot 时加上 `JAVA_TOOL_OPTIONS=-Djava.net.preferIPv4Stack=true`，让 WSL 将 IPv4 环回端口转发给 Windows。
 
 ## 开发规划
 
-当前先推进用户和商家流程，画师、漫展方保留入口但暂未开放。Spring Boot 联调已覆盖交易和售后流程，商品视频和评价待接入。管理员界面当前隐藏，已实现店铺审核 API。
+当前先推进用户和商家流程，画师、漫展方保留入口但暂未开放。Spring Boot 联调已覆盖交易、售后和评价流程，商品视频待接入。管理员界面当前隐藏，已实现店铺审核 API。
 
 具体页面、两人分工和验收条件见 [应用端开发规划](docs/development-plan.md)。已有后端与长期模块约定见 [架构说明](docs/architecture.md)。

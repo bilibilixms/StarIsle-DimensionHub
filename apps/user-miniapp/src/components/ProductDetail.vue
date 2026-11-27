@@ -5,7 +5,7 @@ import { useDemoSync } from '@starisle/ui/useDemoSync'
 import Icon from '@starisle/ui/Icon.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
 import ReviewCard from '@starisle/ui/ReviewCard.vue'
-import { requireDemoLogin, springMarketplaceEnabled } from '@starisle/shared/auth'
+import { requireDemoLogin } from '@starisle/shared/auth'
 import {
   addToCart,
   openCheckout,
@@ -313,7 +313,7 @@ function share() {
             <Icon name="chevron-right" tone="purple" :size="12" />
           </button>
         </view>
-        <view v-if="!springMarketplaceEnabled" class="product-reviews" data-testid="product-reviews">
+        <view class="product-reviews" data-testid="product-reviews">
           <view class="reviews-heading">
             <text>买家评价（{{ productReviews.length }}）</text>
             <text v-if="reviewAverage" data-testid="review-average">

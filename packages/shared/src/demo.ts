@@ -13,7 +13,7 @@ import {
   type DemoVariant,
   type DemoProduct,
   type DemoOrder,
-  type DemoMarketplace,
+  type DemoMarketplaceView,
   type DemoCheckoutLine,
   type DemoCommand,
   type DemoRecipient,
@@ -91,7 +91,7 @@ interface LocalData {
   favorites: string[]
   cart: DemoCartItem[]
   recipient: DemoRecipient
-  marketplace?: DemoMarketplace
+  marketplace?: DemoMarketplaceView
   pending: Record<string, string>
   addresses: DemoAddress[]
   defaultAddressId?: string
@@ -171,7 +171,7 @@ export function getDemoState(storageKey = key(), role = activeRole): DemoState {
     ],
   }
 }
-function merge(marketplace: DemoMarketplace, storageKey = key(), role = activeRole): DemoState {
+function merge(marketplace: DemoMarketplaceView, storageKey = key(), role = activeRole): DemoState {
   const data = load(storageKey)
   if (
     !data.marketplace ||
@@ -198,7 +198,7 @@ function request(
   operationId?: string,
   storageKey = key(),
   role = activeRole,
-): Promise<{ state: DemoMarketplace; orderIds?: string[] }> {
+): Promise<{ state: DemoMarketplaceView; orderIds?: string[] }> {
   if (springMarketplaceEnabled) return requestSpring(command, operationId, storageKey, role)
   return new Promise((resolve, reject) => {
     uni.request({
@@ -214,12 +214,12 @@ function request(
       timeout: 5000,
       success(response) {
         const body = response.data as {
-          state?: DemoMarketplace
+          state?: DemoMarketplaceView
           message?: string
           orderIds?: string[]
         } | null
         if (response.statusCode >= 200 && response.statusCode < 300 && body?.state?.version === 1)
-          resolve(body as { state: DemoMarketplace; orderIds?: string[] })
+          resolve(body as { state: DemoMarketplaceView; orderIds?: string[] })
         else {
           if (body?.state?.version === 1) merge(body.state, storageKey, role)
           if (response.statusCode === 401 && storageKey === key()) {
@@ -246,7 +246,7 @@ async function requestSpring(
   operationId: string | undefined,
   storageKey: string,
   role: DemoRole,
-): Promise<{ state: DemoMarketplace; orderIds?: string[] }> {
+): Promise<{ state: DemoMarketplaceView; orderIds?: string[] }> {
   const token = getDemoSession()?.token
   let completed = false
   try {
@@ -307,6 +307,23 @@ async function sendSpringCommand(command: DemoCommand, token?: string, operation
       return
     case 'receive':
       await springRequest(`/orders/${id}/receipt`, 'POST', token)
+      return
+    case 'submitReview': {
+      if (typeof command.itemKey !== 'string' || !/^[1-9]\d*$/.test(command.itemKey)) {
+        throw new DemoRequestError('订单明细已更新，请刷新后重试', true)
+      }
+      const order = encodeURIComponent(String(command.orderId))
+      await springRequest(`/orders/${order}/items/${command.itemKey}/review`, 'POST', token, {
+        rating: command.rating,
+        content: command.content,
+        images: command.images,
+      }, operationId)
+      return
+    }
+    case 'replyReview':
+      await springRequest(`/merchant/reviews/${id}/reply`, 'POST', token, {
+        content: command.content,
+      }, operationId)
       return
     case 'requestRefund':
       await springRequest(`/orders/${id}/refunds`, 'POST', token, {

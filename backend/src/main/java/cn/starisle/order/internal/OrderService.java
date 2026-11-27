@@ -139,11 +139,11 @@ public class OrderService {
         if (orders.isEmpty()) return orders;
         var ids = orders.stream().map(order -> Long.parseLong(order.id())).toList();
         var items = jdbc.sql("""
-                SELECT order_id, product_id, sku_id, title, variant, cover_url, unit_price_cents, quantity
+                SELECT id, order_id, product_id, sku_id, title, variant, cover_url, unit_price_cents, quantity
                 FROM market_order_item WHERE order_id IN (:ids) ORDER BY id
                 """).param("ids", ids)
                 .query((row, index) -> new OrderItem(row.getString("order_id"),
-                        new OrderView.Item(row.getString("product_id"), row.getString("sku_id"),
+                        new OrderView.Item(row.getString("id"), row.getString("product_id"), row.getString("sku_id"),
                                 row.getString("title"), row.getString("variant"), row.getString("cover_url"),
                                 row.getLong("unit_price_cents"), row.getInt("quantity"))))
                 .list().stream().collect(Collectors.groupingBy(OrderItem::orderId,

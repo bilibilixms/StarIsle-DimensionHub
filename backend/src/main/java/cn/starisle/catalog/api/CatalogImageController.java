@@ -1,6 +1,5 @@
 package cn.starisle.catalog.api;
 
-import cn.starisle.catalog.internal.ProductImages;
 import cn.starisle.identity.api.CurrentAccount;
 import cn.starisle.shared.api.ApiResponse;
 import java.time.Duration;
@@ -20,10 +19,10 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 @RestController
-public class ProductImageController {
-    private final ProductImages images;
+public class CatalogImageController {
+    private final CatalogImages images;
 
-    public ProductImageController(ProductImages images) {
+    public CatalogImageController(CatalogImages images) {
         this.images = images;
     }
 
@@ -31,7 +30,14 @@ public class ProductImageController {
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<UploadedImage> upload(@AuthenticationPrincipal CurrentAccount account,
                                              @RequestParam("file") MultipartFile file) {
-        return ApiResponse.ok(new UploadedImage(images.upload(account.id(), file)));
+        return ApiResponse.ok(new UploadedImage(images.uploadProduct(account.id(), file)));
+    }
+
+    @PostMapping(path = "/api/v1/orders/review-images", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<UploadedImage> uploadReview(@AuthenticationPrincipal CurrentAccount account,
+                                                   @RequestParam("file") MultipartFile file) {
+        return ApiResponse.ok(new UploadedImage(images.uploadReview(account.id(), file)));
     }
 
     @GetMapping("/api/v1/images/{id}.jpg")

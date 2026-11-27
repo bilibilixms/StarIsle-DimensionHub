@@ -1,4 +1,4 @@
-package cn.starisle.catalog.internal;
+package cn.starisle.catalog.api;
 
 import cn.starisle.shop.api.ShopService;
 import java.awt.Color;
@@ -10,6 +10,9 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.sql.Types;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -31,8 +34,8 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
-public class ProductImages {
-    private static final Logger LOG = LoggerFactory.getLogger(ProductImages.class);
+public class CatalogImages {
+    private static final Logger LOG = LoggerFactory.getLogger(CatalogImages.class);
     private static final int MAX_BYTES = 2 * 1024 * 1024;
     private static final int MAX_SIDE = 1600;
     private static final long MAX_PIXELS = 25_000_000;
@@ -44,7 +47,7 @@ public class ProductImages {
     private final ShopService shops;
     private final Path directory;
 
-    public ProductImages(JdbcClient jdbc, ShopService shops,
+    public CatalogImages(JdbcClient jdbc, ShopService shops,
                          @Value("${starisle.catalog.images-directory}") String directory) {
         this.jdbc = jdbc;
         this.shops = shops;
@@ -52,9 +55,18 @@ public class ProductImages {
     }
 
     @Transactional
-    public String upload(long ownerId, MultipartFile file) {
+    public String uploadProduct(long ownerId, MultipartFile file) {
         var shop = shops.findOwnedShop(ownerId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "尚未开通店铺"));
+        return store(file, shop.id(), null);
+    }
+
+    @Transactional
+    public String uploadReview(long buyerId, MultipartFile file) {
+        return store(file, null, buyerId);
+    }
+
+    private String store(MultipartFile file, Long shopId, Long buyerId) {
         if (file.getSize() > MAX_BYTES) {
             throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "商品图片不能超过 2 MB");
         }
@@ -74,13 +86,14 @@ public class ProductImages {
                     try {
                         Files.deleteIfExists(path);
                     } catch (IOException exception) {
-                        LOG.warn("Could not remove rolled-back catalog image {}", id, exception);
+                        LOG.warn("Could not remove rolled-back image {}", id, exception);
                     }
                 }
             }
         });
-        jdbc.sql("INSERT INTO catalog_image (id, shop_id) VALUES (:id, :shop)")
-                .param("id", id.toString()).param("shop", shop.id()).update();
+        jdbc.sql("INSERT INTO catalog_image (id, shop_id, buyer_id) VALUES (:id, :shop, :buyer)")
+                .param("id", id.toString()).param("shop", shopId, Types.BIGINT)
+                .param("buyer", buyerId, Types.BIGINT).update();
         return PREFIX + id + ".jpg";
     }
 
@@ -94,28 +107,48 @@ public class ProductImages {
         return new FileSystemResource(path);
     }
 
-    String normalize(String value, long shopId) {
+    public String normalizeProduct(String value, long shopId) {
         if (value == null || value.isBlank()) return null;
         String trimmed = value.strip();
+        String path = imagePath(trimmed);
+        if (path == null || !path.startsWith(PREFIX)) return trimmed;
+        requireOwner(path, shopId, null, "请使用本店上传的商品图片");
+        return path;
+    }
+
+    public List<String> normalizeReview(List<String> values, long buyerId) {
+        if (values == null) return List.of();
+        var paths = values.stream().map(value -> imagePath(value.strip())).toList();
+        if (new HashSet<>(paths).size() != paths.size()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "评价图片不能重复");
+        }
+        for (String path : paths) requireOwner(path, null, buyerId, "请使用自己上传的评价图片");
+        return paths;
+    }
+
+    private static String imagePath(String value) {
         URI uri;
         try {
-            uri = URI.create(trimmed);
+            uri = URI.create(value);
         } catch (IllegalArgumentException exception) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "商品图片地址无效", exception);
         }
         String scheme = uri.getScheme();
-        if (scheme == null ? !trimmed.startsWith("/") || uri.getRawAuthority() != null
+        if (scheme == null ? !value.startsWith("/") || uri.getRawAuthority() != null
                 : (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) || uri.getHost() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "商品图片地址无效");
         }
-        String path = uri.normalize().getPath();
-        if (path == null || !path.startsWith(PREFIX)) return trimmed;
-        var match = UPLOAD_PATH.matcher(path);
-        if (!match.matches() || jdbc.sql("SELECT id FROM catalog_image WHERE id = :id AND shop_id = :shop")
-                .param("id", match.group(1)).param("shop", shopId).query(String.class).optional().isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "请使用本店上传的商品图片");
+        return uri.normalize().getPath();
+    }
+
+    private void requireOwner(String path, Long shopId, Long buyerId, String message) {
+        var match = UPLOAD_PATH.matcher(path == null ? "" : path);
+        if (!match.matches() || jdbc.sql("""
+                SELECT id FROM catalog_image WHERE id = :id AND shop_id <=> :shop AND buyer_id <=> :buyer
+                """).param("id", match.group(1)).param("shop", shopId, Types.BIGINT).param("buyer", buyerId, Types.BIGINT)
+                .query(String.class).optional().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, message);
         }
-        return path;
     }
 
     private Path path(UUID id) {

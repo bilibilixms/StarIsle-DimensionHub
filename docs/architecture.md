@@ -68,23 +68,25 @@ flowchart LR
 | `POST /api/v1/merchant/product-images`、`GET /api/v1/images/{id}.jpg` | 商家通过 multipart 字段 `file` 上传图片，再按返回的地址读取。商品可绑定本店上传的图片。 |
 | `GET /api/v1/merchant/products/{id}`、`PATCH /api/v1/merchant/products/{id}/publication` | 查看自家商品，或提交 `published` 切换上下架。店铺营业后方可上架。 |
 | `GET /api/v1/admin/shops/pending`、`POST /api/v1/admin/shops/{id}/approve` | 管理员查询待审核店铺并开通营业状态。 |
-| `GET /api/v1/marketplace` | 同步商品、店铺和可访问的订单。买家仅可读取自己的订单，商家仅可读取本店订单。 |
+| `GET /api/v1/marketplace` | 同步商品、店铺、订单和评价。公开评价使用脱敏昵称，只有买家本人可以取得评价关联的订单和明细编号。 |
 | `POST /api/v1/orders/checkout` | 模拟支付并按店铺建单。使用 `X-Idempotency-Key` 重试时复用原订单，同一键绑定同一份请求。 |
 | `POST /api/v1/merchant/orders/{id}/shipment`、`POST /api/v1/orders/{id}/receipt` | 商家记录物流，买家确认收货。 |
 | `POST /api/v1/orders/{id}/refunds` | 买家申请整单仅退款或退货退款，使用 `X-Idempotency-Key` 重试。 |
 | `POST /api/v1/orders/{id}/refunds/{refundId}/cancel` 和 `…/shipment` | 买家撤销售后或提交退货物流。 |
 | `POST /api/v1/merchant/orders/{id}/refunds/{refundId}/decision` 和 `…/receipt` | 商家审核申请或确认收到退货。退款状态和库存更新在同一事务内完成。 |
+| `POST /api/v1/orders/review-images` | 买家通过 multipart 字段 `file` 上传评价图片，评价只能绑定本人上传的图片。 |
+| `POST /api/v1/orders/{orderId}/items/{itemId}/review`、`POST /api/v1/merchant/reviews/{id}/reply` | 买家对已完成订单的明细评价，商家回复本店评价。两个接口都使用 `X-Idempotency-Key` 重试。 |
 
 注册和登录返回 `token` 与 `expiresAt`。商家接口通过 Bearer 令牌校验角色，通过店铺归属限制详情和写入操作。密码和会话令牌分别保存哈希和摘要。首次初始化管理员时同时设置 `STARISLE_ADMIN_PHONE` 和 `STARISLE_ADMIN_PASSWORD`，密码长度为 12–128 位。未设置时可正常启动，管理员账号需要另外初始化。
 
 ## 数据与运行约定
 
 - 表结构由 Flyway 迁移脚本管理，已应用的脚本不修改，通过新版本继续迁移。
-- V1 创建店铺和商品表，V2 增加账号、角色、会话、店铺归属和规格。V3 为旧商品生成默认规格并补充目录字段，V4 增加结算记录、订单及订单项快照，V5 增加商品编辑版本及图片归属，V6 增加售后状态和历史记录。测试数据在 Testcontainers 的临时数据库中单独准备。
+- V1 创建店铺和商品表，V2 增加账号、角色、会话、店铺归属和规格。V3 为旧商品生成默认规格并补充目录字段，V4 增加结算记录、订单及订单项快照，V5 增加商品编辑版本及图片归属，V6 增加售后状态和历史记录，V7 增加订单明细评价和买家图片归属。测试数据在 Testcontainers 的临时数据库中单独准备。
 - 商品价格与库存由数据库约束兜底。后续下单使用事务和带条件的库存更新，Redis 不承担库存或支付结果的唯一事实来源。
 - 新增支付能力时，订单金额和商品快照由后端计算，支付回调验签并按支付流水幂等处理。
 - Redis 先用于限流、临时状态和有实际收益的热点缓存，再按需要扩展。
-- 商品图片保存在配置的目录中，数据库保存文件引用及店铺归属。修改商品图片不删除原文件，历史订单可继续读取封面。
+- 商品和评价图片共用文件存储。数据库分别保存店铺或买家归属，商品或评价只能绑定对应归属的上传图片。修改商品图片时保留原文件供历史订单读取。
 - 开发配置与密钥来自本地 `.env`；数据库、Redis 和后端默认只绑定本机地址。
 
 ## 验证范围
