@@ -1,7 +1,10 @@
 export type AuthRole = 'user' | 'merchant' | 'admin'
 import { DEMO_MERCHANT_VERIFICATION_CODE } from './demo-domain'
 import { ADMIN_UI_ENABLED } from './features'
+import { ApiError } from './index'
+import { springApiBase, springMarketplaceEnabled, springRequest } from './spring-api'
 export { ADMIN_UI_ENABLED } from './features'
+export { springMarketplaceEnabled } from './spring-api'
 export { DEMO_MERCHANT_VERIFICATION_CODE } from './demo-domain'
 export interface DemoSession {
   token: string
@@ -16,8 +19,9 @@ export interface DemoSession {
     shopId?: string
   }
 }
-const sessionKey = 'starisle.auth.session'
-const guestKey = 'starisle.auth.guest'
+const authStorage = springMarketplaceEnabled ? `starisle.spring.auth.${springApiBase}` : 'starisle.auth'
+const sessionKey = `${authStorage}.session`
+const guestKey = `${authStorage}.guest`
 export const demoApiBase = (
   import.meta.env.VITE_DEMO_API_BASE_URL || 'http://127.0.0.1:8787'
 ).replace(/\/$/, '')
@@ -73,6 +77,9 @@ function authRequest(
   method: 'GET' | 'POST' = 'POST',
 ): Promise<DemoSession | undefined> {
   const session = getDemoSession()
+  if (springMarketplaceEnabled) {
+    return springAuthRequest(action, method, data, session)
+  }
   return new Promise((resolve, reject) => {
     uni.request({
       url: `${demoApiBase}/api/demo/auth/${action}`,
@@ -103,6 +110,48 @@ function authRequest(
       },
     })
   })
+}
+
+interface SpringSession {
+  token: string
+  expiresAt: number
+  role: AuthRole
+  accountId: string
+  phone: string
+  shopId: string | null
+}
+
+async function springAuthRequest(
+  action: string,
+  method: 'GET' | 'POST',
+  data: Record<string, unknown>,
+  previous?: DemoSession,
+): Promise<DemoSession | undefined> {
+  try {
+    const session = await springRequest<SpringSession | null>(`/auth/${action}`, method, previous?.token, data)
+    if (!session) return undefined
+    return {
+      token: session.token,
+      expiresAt: session.expiresAt,
+      role: session.role,
+      account: {
+        id: session.accountId,
+        phone: session.phone,
+        nickname: session.phone === '13800000000' ? '小星同学' : `星屿同学${session.phone.slice(-4)}`,
+        roles: [session.role],
+        shopId: session.shopId || undefined,
+      },
+    }
+  } catch (error) {
+    if (
+      error instanceof ApiError && error.status === 401 && action === 'session' &&
+      getDemoSession()?.token === previous?.token
+    ) {
+      clearDemoSession()
+      openLogin(previous?.role)
+    }
+    throw error
+  }
 }
 export function validateDemoCredentials(phone: string, password: string, role: AuthRole = 'user') {
   if (role === 'admin') {

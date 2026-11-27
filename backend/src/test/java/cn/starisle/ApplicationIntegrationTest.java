@@ -4,6 +4,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -58,6 +60,8 @@ class ApplicationIntegrationTest {
 
     @BeforeEach
     void seedIsolatedDatabase() {
+        jdbc.sql("DELETE FROM market_order").update();
+        jdbc.sql("DELETE FROM order_checkout").update();
         jdbc.sql("DELETE FROM catalog_product").update();
         jdbc.sql("DELETE FROM merchant_shop").update();
         jdbc.sql("DELETE FROM app_account_session").update();
@@ -125,6 +129,7 @@ class ApplicationIntegrationTest {
 
     @Test
     void registersRolesWithOnePasswordAndRevokesSessionsOnLogout() throws Exception {
+        assertThat(send("POST", "/api/v1/auth/quick-login", "{\"role\":\"user\"}", null).statusCode()).isEqualTo(401);
         String userForm = accountForm("13800000000", "六位测试密码", "user");
         var registration = send("POST", "/api/v1/auth/register", userForm, null);
         assertThat(registration.statusCode()).isEqualTo(201);
@@ -143,6 +148,7 @@ class ApplicationIntegrationTest {
         assertThat(send("POST", "/api/v1/auth/login",
                 accountForm("13800000000", "wrong-password", "user"), null).statusCode()).isEqualTo(401);
         assertThat(send("POST", "/api/v1/auth/login", userForm, null).statusCode()).isEqualTo(200);
+        assertThat(send("GET", "/api/v1/auth/session", null, userToken).statusCode()).isEqualTo(200);
         assertThat(jdbc.sql("SELECT password_hash FROM app_account WHERE phone = '13800000000'")
                 .query(String.class).single())
                 .doesNotContain("六位测试密码");
@@ -214,6 +220,113 @@ class ApplicationIntegrationTest {
 
         assertThat(send("PATCH", publication, "{\"published\":false}", token).statusCode()).isEqualTo(200);
         assertThat(get("/api/v1/products/" + id).statusCode()).isEqualTo(404);
+    }
+
+    @Test
+    void checkoutAtomicallySplitsByShopAndRetriesWithoutDuplicatingOrdersOrStock() throws Exception {
+        var firstMerchant = register("13800000009", "merchant");
+        var secondMerchant = register("13800000008", "merchant");
+        String buyer = register("13800000001", "user").path("token").asString();
+        String otherBuyer = register("13800000002", "user").path("token").asString();
+        String admin = json.readTree(send("POST", "/api/v1/auth/login",
+                accountForm(ADMIN_PHONE, ADMIN_PASSWORD, "admin"), null).body()).path("data").path("token").asString();
+        var first = publish(firstMerchant, admin, "星星挂件");
+        var second = publish(secondMerchant, admin, "月亮挂件");
+
+        String request = checkoutForm(line(first, 1) + "," + line(first, 1) + "," + line(second, 1));
+        String invalid = checkoutForm(line(first, 2) + "," + line(second, 4));
+        assertThat(checkout(invalid, buyer, "overstock-01").statusCode()).isEqualTo(409);
+        assertThat(stock(first)).isEqualTo(3);
+        assertThat(stock(second)).isEqualTo(3);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM market_order").query(Integer.class).single()).isZero();
+
+        JsonNode ids;
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var one = executor.submit(() -> checkout(request, buyer, "purchase-01"));
+            var two = executor.submit(() -> checkout(request, buyer, "purchase-01"));
+            var firstResponse = one.get();
+            var repeated = two.get();
+            assertThat(firstResponse.statusCode()).as(firstResponse.body()).isEqualTo(200);
+            assertThat(repeated.statusCode()).as(repeated.body()).isEqualTo(200);
+            ids = json.readTree(firstResponse.body()).path("data");
+            assertThat(json.readTree(repeated.body()).path("data")).isEqualTo(ids);
+        }
+        assertThat(ids.size()).isEqualTo(2);
+        assertThat(checkout(invalid, buyer, "purchase-01").statusCode()).isEqualTo(409);
+        assertThat(stock(first)).isEqualTo(1);
+        assertThat(stock(second)).isEqualTo(2);
+        var buyerOrders = snapshot(buyer).path("orders");
+        assertThat(buyerOrders.size()).isEqualTo(2);
+        assertThat(buyerOrders.get(1).path("amount").asLong()).isEqualTo(3980);
+        assertThat(buyerOrders.get(1).path("items").get(0).path("quantity").asInt()).isEqualTo(2);
+        assertThat(snapshot(otherBuyer).path("orders").size()).isZero();
+        assertThat(snapshot(null).path("orders").size()).isZero();
+        assertThat(send("GET", "/api/v1/marketplace", null, "invalid-token").statusCode()).isEqualTo(401);
+
+        String firstToken = firstMerchant.path("token").asString();
+        String secondToken = secondMerchant.path("token").asString();
+        String firstOrder = snapshot(firstToken).path("orders").get(0).path("id").asString();
+        String receive = "/api/v1/orders/" + firstOrder + "/receipt";
+        String ship = "/api/v1/merchant/orders/" + firstOrder + "/shipment";
+        String logistics = "{\"carrier\":\"顺丰速运\",\"tracking\":\"SF20261127001\"}";
+        assertThat(send("POST", receive, null, buyer).statusCode()).isEqualTo(409);
+        assertThat(send("POST", ship, logistics, secondToken).statusCode()).isEqualTo(404);
+        assertThat(send("POST", ship, logistics, firstToken).statusCode()).isEqualTo(200);
+        assertThat(send("POST", ship, logistics, firstToken).statusCode()).isEqualTo(200);
+        assertThat(send("POST", receive, null, otherBuyer).statusCode()).isEqualTo(404);
+        assertThat(send("POST", receive, null, buyer).statusCode()).isEqualTo(200);
+        assertThat(send("POST", receive, null, buyer).statusCode()).isEqualTo(200);
+        assertThat(snapshot(firstToken).path("orders").get(0).path("status").asString()).isEqualTo("COMPLETED");
+
+        String lastItem = checkoutForm(line(first, 1));
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var one = executor.submit(() -> checkout(lastItem, buyer, "last-one-01"));
+            var two = executor.submit(() -> checkout(lastItem, otherBuyer, "last-one-02"));
+            assertThat(List.of(one.get().statusCode(), two.get().statusCode()))
+                    .containsExactlyInAnyOrder(200, 409);
+        }
+        assertThat(stock(first)).isZero();
+    }
+
+    private JsonNode publish(JsonNode merchant, String admin, String title) throws Exception {
+        String id = merchant.path("shopId").asString();
+        assertThat(send("POST", "/api/v1/admin/shops/" + id + "/approve", null, admin).statusCode()).isEqualTo(200);
+        String body = """
+                {"title":"%s","published":true,"skus":[{"name":"标准版","price":"19.90","stock":3}]}
+                """.formatted(title);
+        var response = send("POST", "/api/v1/merchant/products", body, merchant.path("token").asString());
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(201);
+        return json.readTree(response.body()).path("data");
+    }
+
+    private int stock(JsonNode product) throws Exception {
+        var response = get("/api/v1/products/" + product.path("id").asString());
+        return json.readTree(response.body()).path("data").path("skus").get(0).path("stock").asInt();
+    }
+
+    private JsonNode snapshot(String token) throws Exception {
+        var response = send("GET", "/api/v1/marketplace", null, token);
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        return json.readTree(response.body()).path("data");
+    }
+
+    private String line(JsonNode product, int quantity) {
+        return """
+                {"productId":"%s","skuId":"%s","quantity":%d,"expectedPrice":1990,"variantName":"标准版"}
+                """.formatted(product.path("id").asString(), product.path("skus").get(0).path("id").asString(), quantity);
+    }
+
+    private String checkoutForm(String lines) {
+        return """
+                {"items":[%s],"recipient":{"name":"测试收货人","phone":"13800000001","address":"上海市测试路 1 号"}}
+                """.formatted(lines);
+    }
+
+    private HttpResponse<String> checkout(String body, String token, String key) throws Exception {
+        return client.send(HttpRequest.newBuilder(uri("/api/v1/orders/checkout"))
+                .header("Authorization", "Bearer " + token).header("Content-Type", "application/json")
+                .header("X-Idempotency-Key", key).POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                HttpResponse.BodyHandlers.ofString());
     }
 
     private JsonNode register(String phone, String role) throws Exception {

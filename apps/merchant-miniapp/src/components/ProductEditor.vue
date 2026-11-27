@@ -14,6 +14,7 @@ import {
 } from '@starisle/shared/demo'
 import { uploadProductImage } from '@starisle/shared/product-images'
 import { uploadProductVideo } from '@starisle/shared/product-videos'
+import { springMarketplaceEnabled } from '@starisle/shared/auth'
 
 const props = defineProps<{ product?: DemoProduct }>()
 const emit = defineEmits<{ saved: [state: DemoState]; busy: [value: boolean] }>()
@@ -230,7 +231,9 @@ async function save() {
       <text>商品图片</text>
       <text class="section-note">{{ images.length }} / 6</text>
     </view>
-    <text class="editor-note">第一张为封面。支持 JPG、PNG、WebP，每张不超过 2 MB。</text>
+    <text class="editor-note">
+      {{ springMarketplaceEnabled ? '选择示例图片，第一张作为封面。' : '第一张为封面。支持 JPG、PNG、WebP，每张不超过 2 MB。' }}
+    </text>
     <view class="image-grid">
       <view v-for="(image, index) in images" :key="image" class="image-item">
         <image :src="image" mode="aspectFill" @click="setCover(index)" />
@@ -253,7 +256,7 @@ async function save() {
         </button>
       </view>
       <button
-        v-if="images.length < 6"
+        v-if="!springMarketplaceEnabled && images.length < 6"
         class="image-upload"
         :disabled="busy"
         :loading="uploading"
@@ -275,11 +278,11 @@ async function save() {
         {{ index ? '画作' : '手办' }}
       </button>
     </view>
-    <view class="editor-heading section-start">
+    <view v-if="!springMarketplaceEnabled" class="editor-heading section-start">
       <text>商品视频（选填）</text>
       <text class="section-note">{{ video ? '1 / 1' : '0 / 1' }}</text>
     </view>
-    <text class="editor-note">
+    <text v-if="!springMarketplaceEnabled" class="editor-note">
       支持 MP4（H.264），最长 60 秒、最大 20 MB。商品封面仍使用第一张图片。
     </text>
     <video
@@ -293,7 +296,7 @@ async function save() {
       data-testid="editor-product-video"
       @error="error = '视频无法播放，请尝试其他 MP4 视频'"
     />
-    <view class="video-actions">
+    <view v-if="!springMarketplaceEnabled" class="video-actions">
       <button
         class="secondary-button"
         :disabled="busy"

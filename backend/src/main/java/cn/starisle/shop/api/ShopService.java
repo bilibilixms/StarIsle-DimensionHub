@@ -1,6 +1,7 @@
 package cn.starisle.shop.api;
 
 import cn.starisle.shared.api.PageResult;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -31,6 +32,28 @@ public class ShopService {
                 .param("owner", ownerId).query(Shop.class).optional()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "尚未开通店铺"));
     }
+
+    public Optional<ShopProfile> ownedProfile(long ownerId) {
+        return jdbc.sql("SELECT id, name, description, status FROM merchant_shop WHERE owner_account_id = :owner")
+                .param("owner", ownerId).query(this::mapProfile).optional();
+    }
+
+    public Optional<ShopProfile> lockProfile(long shopId) {
+        return jdbc.sql("SELECT id, name, description, status FROM merchant_shop WHERE id = :id FOR UPDATE")
+                .param("id", shopId).query(this::mapProfile).optional();
+    }
+
+    public List<ShopProfile> activeProfiles() {
+        return jdbc.sql("SELECT id, name, description, status FROM merchant_shop WHERE status = 'ACTIVE' ORDER BY id")
+                .query(this::mapProfile).list();
+    }
+
+    private ShopProfile mapProfile(java.sql.ResultSet row, int index) throws java.sql.SQLException {
+        return new ShopProfile(row.getString("id"), row.getString("name"), row.getString("description"),
+                row.getString("status"));
+    }
+
+    public record ShopProfile(String id, String name, String description, String status) {}
 
     @Transactional(readOnly = true)
     public PageResult<PendingShop> pendingShops(int page, int size) {

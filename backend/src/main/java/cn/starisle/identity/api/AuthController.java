@@ -9,6 +9,8 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -40,6 +42,12 @@ public class AuthController {
     public ApiResponse<Void> logout(@RequestHeader(HttpHeaders.AUTHORIZATION) String authorization) {
         accounts.logout(authorization);
         return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/session")
+    public ApiResponse<Session> session(@AuthenticationPrincipal CurrentAccount current,
+                                       @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization) {
+        return ApiResponse.ok(accounts.session(current, authorization));
     }
 
     public record RegisterRequest(@NotNull @Pattern(regexp = "1[0-9]{10}") String phone,

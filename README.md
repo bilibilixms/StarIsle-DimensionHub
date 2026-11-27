@@ -127,8 +127,25 @@ docker compose up -d --wait
 
 Docker Desktop 用户需启用当前发行版的 WSL Integration。停止本项目依赖使用 `docker compose stop`；不要提交 `.env`、第三方密钥或工具缓存。
 
+## Spring Boot 双端联调
+
+启动 MySQL、Redis 和 Spring Boot，在本地联调配置下运行两个预览端。用户 `13800000000` 和商家 `13800000009` 由后端初始化，选择身份后可一键登录。
+
+```bash
+docker compose up -d --wait
+SPRING_PROFILES_ACTIVE=local-demo ./scripts/mvn.sh spring-boot:run
+
+# 分别在两个终端运行，浏览器使用 localhost:5173 和 localhost:5174
+CI=true VITE_MARKETPLACE_BACKEND=spring ./scripts/npm.sh run dev:user:h5
+CI=true VITE_MARKETPLACE_BACKEND=spring ./scripts/npm.sh run dev:merchant:h5
+```
+
+微信开发者工具可使用相同环境变量运行 `dev:user` 和 `dev:merchant`。后端地址默认为 `http://127.0.0.1:8080`，可通过 `VITE_SPRING_API_BASE_URL` 修改。Spring Boot 联调覆盖商品发布和上下架、购物车结算、模拟支付、扣减库存、发货和确认收货。发布表单可选用内置示例图。
+
+如果 Windows 无法访问 WSL 内的 Java 服务，可在启动 Spring Boot 时加上 `JAVA_TOOL_OPTIONS=-Djava.net.preferIPv4Stack=true`，让 WSL 将 IPv4 环回端口转发给 Windows。
+
 ## 开发规划
 
-当前先推进用户和商家流程，画师、漫展方保留入口但暂未开放。管理员界面已隐藏，相关工作留到最后考虑；已有管理实现保留。登录与交易使用本地演示服务，正式业务服务后续接入。
+当前先推进用户和商家流程，画师、漫展方保留入口但暂未开放。Spring Boot 联调已覆盖交易主流程，商品媒体上传、编辑、评价及售后待接入。管理员界面当前隐藏，已实现店铺审核 API。
 
 具体页面、两人分工和验收条件见 [应用端开发规划](docs/development-plan.md)。已有后端与长期模块约定见 [架构说明](docs/architecture.md)。

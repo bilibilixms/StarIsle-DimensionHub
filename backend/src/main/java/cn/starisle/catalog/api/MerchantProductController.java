@@ -10,6 +10,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
@@ -18,11 +19,12 @@ import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -46,8 +48,10 @@ public class MerchantProductController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<ProductDetail> create(@AuthenticationPrincipal CurrentAccount account,
+                                             @RequestHeader(value = "X-Idempotency-Key", required = false)
+                                             @Pattern(regexp = "[A-Za-z0-9-]{8,100}") String operationKey,
                                              @Valid @RequestBody CreateProduct request) {
-        return ApiResponse.ok(products.create(account.id(), request));
+        return ApiResponse.ok(products.create(account.id(), request, operationKey));
     }
 
     @GetMapping("/{id}")
@@ -56,7 +60,7 @@ public class MerchantProductController {
         return ApiResponse.ok(products.detail(account.id(), id));
     }
 
-    @PatchMapping("/{id}/publication")
+    @RequestMapping(path = "/{id}/publication", method = {RequestMethod.PATCH, RequestMethod.PUT})
     public ApiResponse<ProductDetail> publication(@AuthenticationPrincipal CurrentAccount account,
                                                   @PathVariable @Positive long id,
                                                   @Valid @RequestBody Publication request) {
@@ -64,8 +68,12 @@ public class MerchantProductController {
     }
 
     public record CreateProduct(@NotBlank @Size(max = 200) String title,
+                                @Size(max = 120) String subtitle,
                                 @Size(max = 2000) String description,
                                 @Size(max = 1024) String coverUrl,
+                                @Pattern(regexp = "周边|画作") String category,
+                                @Size(max = 10) List<@NotBlank @Size(max = 24) String> tags,
+                                @Size(max = 6) List<@NotBlank @Size(max = 1024) String> images,
                                 boolean published,
                                 @NotNull @Size(min = 1, max = 12) List<@NotNull @Valid CreateSku> skus) {}
 

@@ -17,7 +17,7 @@ flowchart LR
   API --> Redis[(Redis)]
 ```
 
-此图表达目标模块划分。Spring Boot 已实现手机号账号、角色会话、店铺归属、商品读取及商家上架。小程序预览仍使用本地演示服务，收藏、订单和支付的 Spring Boot 模块目前记录业务边界。
+此图表达目标模块划分。Spring Boot 已实现手机号账号、角色会话、店铺审核、商品发布和模拟支付到收货的流程。小程序可通过 `VITE_MARKETPLACE_BACKEND=spring` 接入。同一笔结算在 MySQL 事务内完成价格校验、扣减库存和按店铺建单。
 
 ## 模块边界
 
@@ -66,13 +66,16 @@ flowchart LR
 | `POST /api/v1/merchant/products` | 创建草稿或上架商品，填写标题和至少一个含名称、价格、库存的规格。 |
 | `GET /api/v1/merchant/products/{id}`、`PATCH /api/v1/merchant/products/{id}/publication` | 查看自家商品，或提交 `published` 切换上下架。店铺营业后方可上架。 |
 | `GET /api/v1/admin/shops/pending`、`POST /api/v1/admin/shops/{id}/approve` | 管理员查询待审核店铺并开通营业状态。 |
+| `GET /api/v1/marketplace` | 同步商品、店铺和可访问的订单。买家仅可读取自己的订单，商家仅可读取本店订单。 |
+| `POST /api/v1/orders/checkout` | 模拟支付并按店铺建单。使用 `X-Idempotency-Key` 重试时复用原订单，同一键绑定同一份请求。 |
+| `POST /api/v1/merchant/orders/{id}/shipment`、`POST /api/v1/orders/{id}/receipt` | 商家记录物流，买家确认收货。 |
 
 注册和登录返回 `token` 与 `expiresAt`。商家接口通过 Bearer 令牌校验角色，通过店铺归属限制详情和写入操作。密码和会话令牌分别保存哈希和摘要。首次初始化管理员时同时设置 `STARISLE_ADMIN_PHONE` 和 `STARISLE_ADMIN_PASSWORD`，密码长度为 12–128 位。未设置时可正常启动，管理员账号需要另外初始化。
 
 ## 数据与运行约定
 
 - 表结构由 Flyway 迁移脚本管理，已应用的脚本不修改，通过新版本继续迁移。
-- V1 创建店铺和商品表。V2 增加账号、角色、会话、店铺归属和规格。V1 已有商品保留原价与库存，可查询到空的规格列表。测试数据在 Testcontainers 的临时数据库中单独准备。
+- V1 创建店铺和商品表，V2 增加账号、角色、会话、店铺归属和规格。V3 为旧商品生成默认规格并补充目录字段，V4 增加结算记录、订单及订单项快照。测试数据在 Testcontainers 的临时数据库中单独准备。
 - 商品价格与库存由数据库约束兜底。后续下单使用事务和带条件的库存更新，Redis 不承担库存或支付结果的唯一事实来源。
 - 新增支付能力时，订单金额和商品快照由后端计算，支付回调验签并按支付流水幂等处理。
 - Redis 先用于限流、临时状态和有实际收益的热点缓存，再按需要扩展。

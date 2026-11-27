@@ -22,6 +22,9 @@ import {
   type DemoReviewView,
 } from './demo-domain'
 import { getDemoSession, clearDemoSession, openLogin, demoApiBase, requireDemoLogin } from './auth'
+import { ApiError } from './index'
+import { springApiBase, springMarketplaceEnabled, springRequest } from './spring-api'
+import { loadSpringMarketplace } from './spring-marketplace'
 export {
   DEMO_ASSETS,
   DEMO_PRODUCTS,
@@ -108,6 +111,7 @@ export function setDemoRole(role: DemoRole) {
 }
 function key() {
   const id = getDemoSession()?.account.id
+  if (springMarketplaceEnabled) return `starisle.spring.marketplace.${springApiBase}.${activeRole}.${id || 'guest'}`
   return id === 'demo-user'
     ? `starisle.linked-demo.v2.${activeRole}`
     : `starisle.linked-demo.v2.${activeRole}.${id || 'guest'}`
@@ -128,17 +132,17 @@ function load(storageKey = key()): LocalData {
     getDemoSession()?.account.id === 'demo-user'
       ? (uni.getStorageSync('starisle.visual-demo.v1') as Partial<DemoState> | undefined)
       : undefined
+  const defaultBuyer = springMarketplaceEnabled
+    ? getDemoSession()?.role === 'user' && getDemoSession()?.account.phone === DEMO_RECIPIENT.phone
+    : getDemoSession()?.account.id === 'demo-user'
   return {
     version: 2,
     favorites: Array.isArray(legacy?.favorites) ? legacy.favorites : [],
     cart: Array.isArray(legacy?.cart) ? legacy.cart : [],
     recipient: { ...DEMO_RECIPIENT },
     pending: {},
-    addresses:
-      getDemoSession()?.account.id === 'demo-user'
-        ? [{ id: 'legacy-default', ...DEMO_RECIPIENT }]
-        : [],
-    defaultAddressId: getDemoSession()?.account.id === 'demo-user' ? 'legacy-default' : undefined,
+    addresses: defaultBuyer ? [{ id: 'legacy-default', ...DEMO_RECIPIENT }] : [],
+    defaultAddressId: defaultBuyer ? 'legacy-default' : undefined,
   }
 }
 function save(data: LocalData, storageKey = key(), role = activeRole): DemoState {
@@ -195,6 +199,7 @@ function request(
   storageKey = key(),
   role = activeRole,
 ): Promise<{ state: DemoMarketplace; orderIds?: string[] }> {
+  if (springMarketplaceEnabled) return requestSpring(command, operationId, storageKey, role)
   return new Promise((resolve, reject) => {
     uni.request({
       url: `${demoApiBase}/api/demo/${method === 'GET' ? 'state' : 'commands'}`,
@@ -234,6 +239,71 @@ function request(
       },
     })
   })
+}
+
+async function requestSpring(
+  command: DemoCommand | undefined,
+  operationId: string | undefined,
+  storageKey: string,
+  role: DemoRole,
+): Promise<{ state: DemoMarketplace; orderIds?: string[] }> {
+  const token = getDemoSession()?.token
+  let completed = false
+  try {
+    const orderIds = command ? await sendSpringCommand(command, token, operationId) : undefined
+    completed = !!command
+    return { state: await loadSpringMarketplace(token), orderIds }
+  } catch (error) {
+    if (!(error instanceof ApiError)) throw error
+    if (error.status === 401 && storageKey === key() && getDemoSession()?.token === token) {
+      clearDemoSession()
+      openLogin(role)
+    }
+    throw new DemoRequestError(error.message, !completed && error.status >= 400 && error.status < 500)
+  }
+}
+
+async function sendSpringCommand(command: DemoCommand, token?: string, operationId?: string) {
+  const id = encodeURIComponent(String(command.id))
+  switch (command.type) {
+    case 'createProduct': {
+      const images = command.images as string[] | undefined
+      const skus = command.skus ?? [{ name: '默认款', price: command.price, stock: command.stock }]
+      await springRequest('/merchant/products', 'POST', token, {
+        title: command.title,
+        subtitle: command.subtitle,
+        description: command.description,
+        category: command.category,
+        tags: command.tags,
+        images,
+        coverUrl: images?.[0] ?? command.cover,
+        published: command.published ?? true,
+        skus,
+      }, operationId)
+      return
+    }
+    case 'toggleProduct':
+      await springRequest(`/merchant/products/${id}/publication`, 'PUT', token, { published: command.published })
+      return
+    case 'checkout': {
+      const checkout = command as DemoCheckout
+      return springRequest<string[]>('/orders/checkout', 'POST', token, {
+        items: checkout.items.map(({ variant, ...line }) => ({ ...line, skuId: variant })),
+        recipient: checkout.recipient,
+      }, operationId)
+    }
+    case 'ship':
+      await springRequest(`/merchant/orders/${id}/shipment`, 'POST', token, {
+        carrier: command.carrier,
+        tracking: command.tracking,
+      })
+      return
+    case 'receive':
+      await springRequest(`/orders/${id}/receipt`, 'POST', token)
+      return
+    default:
+      throw new DemoRequestError('此操作将在后续接入 Spring Boot', true)
+  }
 }
 export async function syncDemoState(): Promise<DemoState> {
   const storageKey = key()
@@ -715,6 +785,10 @@ export function editDemoProduct(
   return mutate({ type: 'editProduct', id, title, price, stock, expectedStock })
 }
 export function toggleDemoProduct(id: string): Promise<DemoState> {
+  if (springMarketplaceEnabled) {
+    const product = getDemoState().products.find((item) => item.id === id)
+    return mutate({ type: 'toggleProduct', id, published: !product?.published })
+  }
   return mutate({ type: 'toggleProduct', id })
 }
 export function createDemoProduct(

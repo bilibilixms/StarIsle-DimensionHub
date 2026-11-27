@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { springMarketplaceEnabled } from '@starisle/shared/auth'
+
+const backendName = springMarketplaceEnabled ? 'Spring Boot' : '演示服务'
 defineProps<{ connected: boolean; syncing: boolean; error: string }>()
 defineEmits<{ retry: [] }>()
 </script>
@@ -11,8 +14,8 @@ defineEmits<{ retry: [] }>()
         error
           ? '联动暂未连接，当前显示上次记录'
           : connected
-            ? '演示联动已连接 · 自动更新'
-            : '正在连接演示服务…'
+            ? (springMarketplaceEnabled ? 'Spring Boot 已连接 · 自动更新' : '演示联动已连接 · 自动更新')
+            : `正在连接${backendName}…`
       }}
     </text>
     <button v-if="error" :disabled="syncing" @click="$emit('retry')" data-testid="retry-sync">

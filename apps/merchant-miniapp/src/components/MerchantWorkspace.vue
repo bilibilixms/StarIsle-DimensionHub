@@ -9,7 +9,7 @@ import Sheet from '@starisle/ui/Sheet.vue'
 import OrderItems from '@starisle/user/OrderItems.vue'
 import ProductEditor from './ProductEditor.vue'
 import MerchantReviews from './MerchantReviews.vue'
-import { logoutDemo, openLogin } from '@starisle/shared/auth'
+import { logoutDemo, openLogin, springMarketplaceEnabled } from '@starisle/shared/auth'
 import {
   DEMO_ASSETS,
   editDemoShop,
@@ -337,7 +337,7 @@ async function toggleProduct(id: string) {
                 <Icon name="shield" tone="orange" :size="11" />
               </view>
             </view>
-            <button class="manage-shop" data-testid="manage-shop" @click="openShop">
+            <button v-if="!springMarketplaceEnabled" class="manage-shop" data-testid="manage-shop" @click="openShop">
               <Icon name="settings" tone="orange" :size="15" />
             </button>
           </view>
@@ -414,7 +414,7 @@ async function toggleProduct(id: string) {
             <text class="todo-count">{{ waiting }}</text>
             <Icon name="chevron-right" :size="13" />
           </button>
-          <button class="todo-row" @click="orders('退款中')" data-testid="refund-orders">
+          <button v-if="!springMarketplaceEnabled" class="todo-row" @click="orders('退款中')" data-testid="refund-orders">
             <view class="todo-icon pink"><Icon name="receipt" tone="orange" :size="18" /></view>
             <text>待处理退款</text>
             <text class="todo-count">
@@ -428,7 +428,7 @@ async function toggleProduct(id: string) {
             <text class="todo-count pink-count">{{ completed }}</text>
             <Icon name="chevron-right" :size="13" />
           </button>
-          <button class="todo-row" data-testid="manage-reviews" @click="changeTab('reviews')">
+          <button v-if="!springMarketplaceEnabled" class="todo-row" data-testid="manage-reviews" @click="changeTab('reviews')">
             <view class="todo-icon orange"><Icon name="message" tone="orange" :size="18" /></view>
             <text>评价管理</text>
             <text class="todo-count">
@@ -436,7 +436,7 @@ async function toggleProduct(id: string) {
             </text>
             <Icon name="chevron-right" :size="13" />
           </button>
-          <button class="todo-row" @click="openShop">
+          <button v-if="!springMarketplaceEnabled" class="todo-row" @click="openShop">
             <view class="todo-icon orange"><Icon name="settings" tone="orange" :size="18" /></view>
             <text>完善店铺资料</text>
             <text class="todo-tag">让同好更了解你</text>
@@ -571,6 +571,7 @@ async function toggleProduct(id: string) {
               {{ product.published ? '下架' : '上架' }}
             </button>
             <button
+              v-if="!springMarketplaceEnabled"
               class="edit-action"
               @click="editProduct(product)"
               :data-testid="`edit-${product.id}`"
@@ -588,7 +589,7 @@ async function toggleProduct(id: string) {
         <text class="profile-shop-name">{{ state.shop.name }}</text>
         <text class="profile-shop-description">{{ state.shop.description }}</text>
         <view class="profile-menu">
-          <button @click="openShop">
+          <button v-if="!springMarketplaceEnabled" @click="openShop">
             <Icon name="bag" tone="orange" />
             <text>店铺资料</text>
             <Icon name="chevron-right" :size="16" />
@@ -598,7 +599,7 @@ async function toggleProduct(id: string) {
             <text>小店消息</text>
             <Icon name="chevron-right" :size="16" />
           </button>
-          <button @click="reset">
+          <button v-if="!springMarketplaceEnabled" @click="reset">
             <Icon name="settings" :size="21" />
             <text>重置本店演示数据</text>
             <Icon name="chevron-right" :size="16" />

@@ -1,10 +1,9 @@
 package cn.starisle.identity.internal;
 
 import cn.starisle.identity.api.CurrentAccount;
+import cn.starisle.shared.Sha256;
 import cn.starisle.shop.api.ShopService;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -47,7 +46,7 @@ public class AccountService {
         if (!passwords.matches(password, account.passwordHash())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "开通新身份需使用原密码");
         }
-        if (hasRole(account.id(), "admin")) {
+        if (account.demoAccount() || hasRole(account.id(), "admin")) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "请使用其他账号注册");
         }
         if (hasRole(account.id(), role)) {
@@ -90,6 +89,36 @@ public class AccountService {
         addRole(accountByPhone(phone).orElseThrow().id(), "admin");
     }
 
+    @Transactional
+    public void provisionDemo(String phone, String role, String shopName) {
+        jdbc.sql("""
+                INSERT INTO app_account (phone, password_hash, demo_account) VALUES (:phone, :hash, TRUE)
+                ON DUPLICATE KEY UPDATE id = id
+                """).param("phone", phone).param("hash", passwords.encode(newToken())).update();
+        var account = accountByPhone(phone).orElseThrow();
+        if (!account.demoAccount()) {
+            throw new IllegalStateException("演示手机号已被普通账号使用");
+        }
+        if (hasRole(account.id(), role)) return;
+        addRole(account.id(), role);
+        if ("merchant".equals(role)) {
+            shops.openPendingShop(account.id(), shopName);
+            shops.approve(shops.findOwnedShop(account.id()).orElseThrow().id());
+        }
+    }
+
+    @Transactional
+    public Session quickLogin(String role) {
+        if (!"user".equals(role) && !"merchant".equals(role)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "不支持该演示身份");
+        }
+        String phone = "user".equals(role) ? "13800000000" : "13800000009";
+        var account = accountByPhone(phone).filter(Credentials::demoAccount)
+                .filter(value -> hasRole(value.id(), role))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "演示账号不可用"));
+        return issue(account, role);
+    }
+
     public Optional<CurrentAccount> authenticate(String authorization) {
         if (authorization == null || !authorization.startsWith("Bearer ")) return Optional.empty();
         String token = authorization.substring(7);
@@ -105,8 +134,27 @@ public class AccountService {
                 .param("token", digest(authorization.substring(7))).update();
     }
 
+    public String buyerName(long accountId) {
+        String phone = jdbc.sql("SELECT phone FROM app_account WHERE id = :id")
+                .param("id", accountId).query(String.class).single();
+        return "星屿同学" + phone.substring(7);
+    }
+
+    public Session session(CurrentAccount current, String authorization) {
+        String token = authorization.substring(7);
+        var session = jdbc.sql("""
+                SELECT a.id, a.phone, s.expires_at FROM app_account_session s
+                JOIN app_account a ON a.id = s.account_id
+                WHERE s.token_digest = :token AND s.expires_at > CURRENT_TIMESTAMP(6)
+                """).param("token", digest(token))
+                .query((row, index) -> sessionView(token, row.getTimestamp("expires_at").toInstant(),
+                        current.role(), row.getLong("id"), row.getString("phone")))
+                .optional().orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "登录已失效"));
+        return session;
+    }
+
     private Optional<Credentials> accountByPhone(String phone) {
-        return jdbc.sql("SELECT id, phone, password_hash FROM app_account WHERE phone = :phone")
+        return jdbc.sql("SELECT id, phone, password_hash, demo_account FROM app_account WHERE phone = :phone")
                 .param("phone", phone).query(Credentials.class).optional();
     }
 
@@ -128,8 +176,12 @@ public class AccountService {
                 VALUES (:token, :account, :role, :expiresAt)
                 """).param("token", digest(token)).param("account", account.id()).param("role", role)
                 .param("expiresAt", Timestamp.from(expiresAt)).update();
-        var shop = "merchant".equals(role) ? shops.findOwnedShop(account.id()).orElse(null) : null;
-        return new Session(token, expiresAt.toEpochMilli(), role, String.valueOf(account.id()), account.phone(),
+        return sessionView(token, expiresAt, role, account.id(), account.phone());
+    }
+
+    private Session sessionView(String token, Instant expiresAt, String role, long accountId, String phone) {
+        var shop = "merchant".equals(role) ? shops.findOwnedShop(accountId).orElse(null) : null;
+        return new Session(token, expiresAt.toEpochMilli(), role, String.valueOf(accountId), phone,
                 shop == null ? null : String.valueOf(shop.id()), shop == null ? null : shop.status());
     }
 
@@ -140,14 +192,10 @@ public class AccountService {
     }
 
     private static byte[] digest(String token) {
-        try {
-            return MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.US_ASCII));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 unavailable", exception);
-        }
+        return Sha256.digest(token.getBytes(StandardCharsets.US_ASCII));
     }
 
-    private record Credentials(long id, String phone, String passwordHash) {}
+    private record Credentials(long id, String phone, String passwordHash, boolean demoAccount) {}
 
     public record Session(String token, long expiresAt, String role, String accountId, String phone,
                           String shopId, String shopStatus) {}
