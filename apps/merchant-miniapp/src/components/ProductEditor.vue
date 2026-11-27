@@ -14,7 +14,6 @@ import {
 } from '@starisle/shared/demo'
 import { uploadProductImage } from '@starisle/shared/product-images'
 import { uploadProductVideo } from '@starisle/shared/product-videos'
-import { springMarketplaceEnabled } from '@starisle/shared/auth'
 
 const props = defineProps<{ product?: DemoProduct }>()
 const emit = defineEmits<{ saved: [state: DemoState]; busy: [value: boolean] }>()
@@ -278,11 +277,11 @@ async function save() {
         {{ index ? '画作' : '手办' }}
       </button>
     </view>
-    <view v-if="!springMarketplaceEnabled" class="editor-heading section-start">
+    <view class="editor-heading section-start">
       <text>商品视频（选填）</text>
       <text class="section-note">{{ video ? '1 / 1' : '0 / 1' }}</text>
     </view>
-    <text v-if="!springMarketplaceEnabled" class="editor-note">
+    <text class="editor-note">
       支持 MP4（H.264），最长 60 秒、最大 20 MB。商品封面仍使用第一张图片。
     </text>
     <video
@@ -296,7 +295,7 @@ async function save() {
       data-testid="editor-product-video"
       @error="error = '视频无法播放，请尝试其他 MP4 视频'"
     />
-    <view v-if="!springMarketplaceEnabled" class="video-actions">
+    <view class="video-actions">
       <button
         class="secondary-button"
         :disabled="busy"

@@ -39,9 +39,9 @@ public class SecurityConfig {
                         auth.requestMatchers(HttpMethod.POST, "/api/v1/auth/quick-login").permitAll();
                     }
                     auth.requestMatchers(HttpMethod.GET, "/api/v1/products", "/api/v1/products/{id}",
-                                "/api/v1/images/{id}.jpg", "/api/v1/marketplace", "/actuator/health",
+                                "/api/v1/images/{id}.jpg", "/api/v1/videos/{id}.mp4", "/api/v1/marketplace", "/actuator/health",
                                 "/v3/api-docs", "/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**").permitAll()
-                        .requestMatchers(HttpMethod.HEAD, "/api/v1/images/{id}.jpg").permitAll()
+                        .requestMatchers(HttpMethod.HEAD, "/api/v1/images/{id}.jpg", "/api/v1/videos/{id}.mp4").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/register", "/api/v1/auth/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/logout").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/auth/session").authenticated()
@@ -79,8 +79,9 @@ public class SecurityConfig {
             @Value("${starisle.cors.allowed-origins}") String origins, Environment environment) {
         var cors = new CorsConfiguration();
         cors.setAllowedOrigins(Arrays.stream(origins.split(",")).map(String::trim).toList());
-        cors.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        cors.setAllowedHeaders(List.of("Content-Type", "Authorization", "X-Idempotency-Key"));
+        cors.setAllowedMethods(List.of("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        cors.setAllowedHeaders(List.of("Content-Type", "Authorization", "X-Idempotency-Key", "Range"));
+        cors.setExposedHeaders(List.of("Accept-Ranges", "Content-Range"));
         if (environment.matchesProfiles("local-demo")) {
             cors.addAllowedOrigin("https://servicewechat.com");
         }

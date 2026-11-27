@@ -9,6 +9,12 @@ const uploads = {
     timeout: 15_000,
   },
   reviewImage: { endpoint: '/orders/review-images', role: 'user', name: '图片', timeout: 15_000 },
+  productVideo: {
+    endpoint: '/merchant/product-videos',
+    role: 'merchant',
+    name: '视频',
+    timeout: 120_000,
+  },
 } as const
 
 export function uploadSpringMedia(

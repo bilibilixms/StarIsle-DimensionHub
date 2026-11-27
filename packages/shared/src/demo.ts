@@ -280,6 +280,7 @@ async function sendSpringCommand(command: DemoCommand, token?: string, operation
         tags: command.tags,
         images,
         coverUrl: images?.[0] ?? command.cover,
+        videoUrl: command.video,
         published: command.published ?? true,
         skus: (skus as { id?: string; [key: string]: unknown }[]).map(({ id, ...sku }) => ({
           ...sku,

@@ -1,5 +1,6 @@
 package cn.starisle.shared.api;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -22,8 +23,10 @@ public class ApiExceptionHandler {
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
-    ResponseEntity<ApiResponse<Void>> uploadTooLarge() {
-        return ResponseEntity.status(413).body(ApiResponse.error(413, "商品图片不能超过 2 MB"));
+    ResponseEntity<ApiResponse<Void>> uploadTooLarge(HttpServletRequest request) {
+        String path = request.getServletPath();
+        String message = path.endsWith("/product-videos") ? "商品视频不能超过 20 MB" : "商品图片不能超过 2 MB";
+        return ResponseEntity.status(413).body(ApiResponse.error(413, message));
     }
 
     @ExceptionHandler(ResponseStatusException.class)

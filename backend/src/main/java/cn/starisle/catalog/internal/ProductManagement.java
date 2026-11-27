@@ -31,14 +31,16 @@ public class ProductManagement {
     private final ShopService shops;
     private final ProductQuery products;
     private final CatalogImages images;
+    private final ProductVideos videos;
     private final ObjectMapper json;
 
     public ProductManagement(JdbcClient jdbc, ShopService shops, ProductQuery products, CatalogImages images,
-                             ObjectMapper json) {
+                             ProductVideos videos, ObjectMapper json) {
         this.jdbc = jdbc;
         this.shops = shops;
         this.products = products;
         this.images = images;
+        this.videos = videos;
         this.json = json;
     }
 
@@ -61,14 +63,15 @@ public class ProductManagement {
         boolean publish = Boolean.TRUE.equals(request.published());
         if (publish) shop.requireActive();
         var gallery = gallery(shop.id(), request.images(), request.coverUrl());
+        String videoId = videos.ownedId(request.videoUrl(), shop.id());
         var price = request.skus().stream().map(CreateSku::price).min(BigDecimal::compareTo).orElseThrow();
         int stock = request.skus().stream().mapToInt(CreateSku::stock).sum();
         var key = new GeneratedKeyHolder();
         jdbc.sql("""
                 INSERT INTO catalog_product
-                    (shop_id, title, subtitle, description, category, tags, images, cover_url, stock, price, status,
+                    (shop_id, title, subtitle, description, category, tags, images, cover_url, video_id, stock, price, status,
                      creation_key, creation_digest)
-                VALUES (:shop, :title, :subtitle, :description, :category, :tags, :images, :cover, :stock, :price, :status,
+                VALUES (:shop, :title, :subtitle, :description, :category, :tags, :images, :cover, :video, :stock, :price, :status,
                         :key, :digest)
                 """).param("shop", shop.id()).param("title", request.title().strip())
                 .param("subtitle", request.subtitle() == null ? "" : request.subtitle().strip())
@@ -76,7 +79,8 @@ public class ProductManagement {
                 .param("category", request.category() == null ? "周边" : request.category())
                 .param("tags", json.writeValueAsString(request.tags() == null ? List.of() : request.tags()))
                 .param("images", json.writeValueAsString(gallery.images()))
-                .param("cover", gallery.cover(), Types.VARCHAR).param("stock", stock).param("price", price)
+                .param("cover", gallery.cover(), Types.VARCHAR).param("video", videoId, Types.CHAR)
+                .param("stock", stock).param("price", price)
                 .param("status", publish ? "PUBLISHED" : "DRAFT")
                 .param("key", operationKey, Types.VARCHAR).param("digest", digest, Types.BINARY).update(key, "id");
         long productId = key.getKey().longValue();
@@ -106,6 +110,7 @@ public class ProductManagement {
         }
         if (request.published()) shop.requireActive();
         var gallery = gallery(shop.id(), request.images(), request.coverUrl());
+        String videoId = videos.ownedId(request.videoUrl(), shop.id());
         var skus = editedSkus(current, request.skus());
         var price = skus.stream().map(SavedSku::price).min(BigDecimal::compareTo).orElseThrow();
         int stock = skus.stream().mapToInt(SavedSku::stock).sum();
@@ -116,6 +121,7 @@ public class ProductManagement {
         jdbc.sql("""
                 UPDATE catalog_product SET title = :title, subtitle = :subtitle, description = :description,
                     category = :category, tags = :tags, images = :images, cover_url = :cover, price = :price,
+                    video_id = CASE WHEN :replaceVideo THEN :video ELSE video_id END,
                     stock = :stock, status = :status, management_version = management_version + 1,
                     last_edit_key = :key, last_edit_digest = :digest
                 WHERE id = :id
@@ -125,6 +131,7 @@ public class ProductManagement {
                 .param("category", request.category() == null ? "周边" : request.category())
                 .param("tags", json.writeValueAsString(request.tags() == null ? List.of() : request.tags()))
                 .param("images", json.writeValueAsString(gallery.images())).param("cover", gallery.cover(), Types.VARCHAR)
+                .param("replaceVideo", request.videoUrl() != null).param("video", videoId, Types.CHAR)
                 .param("price", price).param("stock", stock).param("status", request.published() ? "PUBLISHED" : "DRAFT")
                 .param("key", operationKey, Types.VARCHAR).param("digest", digest, Types.BINARY).update();
         return products.ownedDetail(productId, shop.id());

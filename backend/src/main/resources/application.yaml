@@ -19,8 +19,8 @@ spring:
     clean-disabled: true
   servlet:
     multipart:
-      max-file-size: 2MB
-      max-request-size: 3MB
+      max-file-size: 20MB
+      max-request-size: 21MB
 server:
   address: ${SERVER_ADDRESS:127.0.0.1}
   port: ${SERVER_PORT:8080}
@@ -40,6 +40,7 @@ springdoc:
 starisle:
   catalog:
     images-directory: ${STARISLE_PRODUCT_IMAGE_DIR:.tools/spring-uploads}
+    videos-directory: ${STARISLE_PRODUCT_VIDEO_DIR:.tools/spring-videos}
   admin:
     phone: ${STARISLE_ADMIN_PHONE:}
     password: ${STARISLE_ADMIN_PASSWORD:}

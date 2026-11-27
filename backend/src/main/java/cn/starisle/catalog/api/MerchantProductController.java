@@ -4,6 +4,7 @@ import cn.starisle.catalog.internal.ProductManagement;
 import cn.starisle.identity.api.CurrentAccount;
 import cn.starisle.shared.api.ApiResponse;
 import cn.starisle.shared.api.PageResult;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Max;
@@ -84,6 +85,7 @@ public class MerchantProductController {
                                 @Pattern(regexp = "周边|画作") String category,
                                 @Size(max = 10) List<@NotBlank @Size(max = 24) String> tags,
                                 @Size(max = 6) List<@NotBlank @Size(max = 1024) String> images,
+                                @JsonInclude(JsonInclude.Include.NON_NULL) @Size(max = 1024) String videoUrl,
                                 Boolean published,
                                 @NotNull @Size(min = 1, max = 12) List<@NotNull @Valid CreateSku> skus) {}
 
@@ -99,6 +101,7 @@ public class MerchantProductController {
                               @Pattern(regexp = "周边|画作") String category,
                               @Size(max = 10) List<@NotBlank @Size(max = 24) String> tags,
                               @Size(max = 6) List<@NotBlank @Size(max = 1024) String> images,
+                              @JsonInclude(JsonInclude.Include.NON_NULL) @Size(max = 1024) String videoUrl,
                               @NotNull Boolean published,
                               @NotNull @Size(min = 1, max = 12) List<@NotNull @Valid EditSku> skus) {}
 

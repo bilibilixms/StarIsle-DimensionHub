@@ -1,8 +1,11 @@
 import { demoApiBase, getDemoSession, clearDemoSession, openLogin } from './auth'
+import { springMarketplaceEnabled } from './spring-api'
+import { uploadSpringMedia } from './spring-media'
 
 export async function uploadProductVideo(path: string): Promise<string> {
   const session = getDemoSession()
   if (session?.role !== 'merchant') throw new Error('请先登录商家账号')
+  if (springMarketplaceEnabled) return uploadSpringMedia(path, session.token, 'productVideo')
   let data = ''
   // #ifdef H5
   const blob = await fetch(path).then((response) => response.blob())

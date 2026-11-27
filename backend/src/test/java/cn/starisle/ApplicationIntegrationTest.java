@@ -7,8 +7,11 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -62,6 +65,7 @@ class ApplicationIntegrationTest {
         registry.add("starisle.admin.phone", () -> ADMIN_PHONE);
         registry.add("starisle.admin.password", () -> ADMIN_PASSWORD);
         registry.add("starisle.catalog.images-directory", () -> imageDirectory.toString());
+        registry.add("starisle.catalog.videos-directory", () -> imageDirectory.resolve("videos").toString());
     }
 
     @LocalServerPort int port;
@@ -335,6 +339,53 @@ class ApplicationIntegrationTest {
         var ownDraft = send("POST", "/api/v1/merchant/products", draft, token);
         assertThat(ownDraft.statusCode()).as(ownDraft.body()).isEqualTo(201);
         assertThat(json.readTree(ownDraft.body()).path("data").path("coverUrl").asString()).isEqualTo(image);
+    }
+
+    @Test
+    void productVideoIsValidatedShopScopedAndStreamedByByteRange() throws Exception {
+        String token = register("13800000009", "merchant").path("token").asString();
+        String other = register("13800000008", "merchant").path("token").asString();
+        String buyer = register("13800000001", "user").path("token").asString();
+        String upload = "/api/v1/merchant/product-videos";
+        byte[] clip = Files.readAllBytes(Path.of("..", "tests", "fixtures", "product-demo.mp4"));
+        assertThat(uploadMedia(upload, buyer, clip).statusCode()).isEqualTo(403);
+        assertThat(uploadMedia(upload, token, new byte[12]).statusCode()).isEqualTo(400);
+        var tooLong = ByteBuffer.wrap(clip.clone());
+        int movieHeader = new String(clip, StandardCharsets.ISO_8859_1).indexOf("mvhd") + 4;
+        assertThat(tooLong.get(movieHeader)).isEqualTo((byte) 1);
+        tooLong.putLong(movieHeader + 24, 61L * tooLong.getInt(movieHeader + 20));
+        assertThat(uploadMedia(upload, token, tooLong.array()).statusCode()).isEqualTo(400);
+
+        var uploaded = uploadMedia(upload, token, clip);
+        assertThat(uploaded.statusCode()).as(uploaded.body()).isEqualTo(201);
+        String url = json.readTree(uploaded.body()).path("data").path("url").asString();
+        var range = client.send(HttpRequest.newBuilder(uri(url)).header("Range", "bytes=0-15").GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(range.statusCode()).isEqualTo(206);
+        assertThat(range.headers().firstValue("Content-Range")).contains("bytes 0-15/" + clip.length);
+        assertThat(range.body()).containsExactly(Arrays.copyOf(clip, 16));
+
+        String products = "/api/v1/merchant/products";
+        String draft = """
+                {"title":"商品视频测试","videoUrl":"%s","skus":[{"name":"标准版","price":"19.90","stock":3}]}
+                """.formatted(url);
+        assertThat(send("POST", products, draft, other).statusCode()).isEqualTo(403);
+        var created = send("POST", products, draft, token);
+        assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
+        var product = json.readTree(created.body()).path("data");
+        assertThat(product.path("videoUrl").asString()).isEqualTo(url);
+        String path = products + "/" + product.path("id").asString();
+        String edit = """
+                {"title":"商品视频测试","expectedVersion":%s,"published":false,
+                 "skus":[{"id":"%s","name":"标准版","price":"19.90"}]%s}
+                """;
+        String sku = product.path("skus").get(0).path("id").asString();
+        var preserved = send("PUT", path, edit.formatted(0, sku, ""), token);
+        assertThat(preserved.statusCode()).as(preserved.body()).isEqualTo(200);
+        assertThat(json.readTree(preserved.body()).path("data").path("videoUrl").asString()).isEqualTo(url);
+        var removed = send("PUT", path, edit.formatted(1, sku, ",\"videoUrl\":\"\""), token);
+        assertThat(removed.statusCode()).as(removed.body()).isEqualTo(200);
+        assertThat(json.readTree(removed.body()).path("data").path("videoUrl").isNull()).isTrue();
     }
 
     @Test

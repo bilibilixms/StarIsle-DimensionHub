@@ -29,6 +29,7 @@ interface CatalogProduct {
   tags: string[]
   images: string[]
   coverUrl: string | null
+  videoUrl?: string | null
   price: string
   stock: number
   sold: number
@@ -119,11 +120,12 @@ function cents(price: string): number {
   return Number(whole) * 100 + Number(fraction.padEnd(2, '0'))
 }
 
-function product({ skus, coverUrl, status, ...entry }: CatalogProduct): DemoProduct {
+function product({ skus, coverUrl, videoUrl, status, ...entry }: CatalogProduct): DemoProduct {
   return {
     ...entry,
     cover: coverUrl ? springMediaUrl(coverUrl) : DEMO_ASSETS.figurine,
     images: entry.images.map(springMediaUrl),
+    video: videoUrl ? springMediaUrl(videoUrl) : undefined,
     price: cents(entry.price),
     published: status === 'PUBLISHED',
     tag: entry.tags[0] || '',

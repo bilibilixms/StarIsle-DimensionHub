@@ -148,10 +148,12 @@ Spring Boot 版支持整单仅退款和退货退款。待发货订单获批后�
 
 商家可上传最多 6 张 JPG、PNG 或 WebP 静态图片，每张不超过 2 MB。图片经后端处理后保存在 `.tools/spring-uploads/`，可通过 `STARISLE_PRODUCT_IMAGE_DIR` 修改路径。MySQL 保存图片归属和商品引用。历史订单保留成交时的商品图片、价格和规格。
 
+商品可附加一个 MP4（H.264）视频，最长 60 秒、最大 20 MB。商家可在商品编辑器中预览、更换或移除，买家在详情页按需播放。服务校验格式、时长和店铺归属，支持 HTTP Range 分段读取。视频保存在 `.tools/spring-videos/`，可通过 `STARISLE_PRODUCT_VIDEO_DIR` 修改路径，第一张图片仍作为封面。
+
 如果 Windows 无法访问 WSL 内的 Java 服务，可在启动 Spring Boot 时加上 `JAVA_TOOL_OPTIONS=-Djava.net.preferIPv4Stack=true`，让 WSL 将 IPv4 环回端口转发给 Windows。
 
 ## 开发规划
 
-当前先推进用户和商家流程，画师、漫展方保留入口但暂未开放。Spring Boot 联调已覆盖交易、售后和评价流程，商品视频待接入。管理员界面当前隐藏，已实现店铺审核 API。
+当前先推进用户和商家流程，画师、漫展方保留入口但暂未开放。Spring Boot 联调已覆盖交易、售后、评价及商品视频。管理员界面当前隐藏，已实现店铺审核 API。
 
 具体页面、两人分工和验收条件见 [应用端开发规划](docs/development-plan.md)。已有后端与长期模块约定见 [架构说明](docs/architecture.md)。
