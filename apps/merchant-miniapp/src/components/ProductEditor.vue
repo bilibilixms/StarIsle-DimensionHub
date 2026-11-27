@@ -36,12 +36,14 @@ const converted = ref(false)
 const price = ref(props.product ? money(props.product.price) : '')
 const stock = ref(props.product ? String(props.product.stock) : '')
 const skus = ref(
-  props.product?.skus?.map((sku) => ({
-    id: sku.id,
-    name: sku.name,
-    price: money(sku.price),
-    stock: String(sku.stock),
-  })) || [{ id: 'standard', name: '默认款', price: '', stock: '' }],
+  props.product?.skus?.length
+    ? props.product.skus.map((sku) => ({
+        id: sku.id,
+        name: sku.name,
+        price: money(sku.price),
+        stock: String(sku.stock),
+      }))
+    : [{ id: 'standard', name: '默认款', price: price.value, stock: stock.value }],
 )
 const published = ref(props.product?.published ?? true)
 const error = ref('')
@@ -231,9 +233,7 @@ async function save() {
       <text>商品图片</text>
       <text class="section-note">{{ images.length }} / 6</text>
     </view>
-    <text class="editor-note">
-      {{ springMarketplaceEnabled ? '选择示例图片，第一张作为封面。' : '第一张为封面。支持 JPG、PNG、WebP，每张不超过 2 MB。' }}
-    </text>
+    <text class="editor-note">第一张为封面。支持 JPG、PNG、WebP，每张不超过 2 MB。</text>
     <view class="image-grid">
       <view v-for="(image, index) in images" :key="image" class="image-item">
         <image :src="image" mode="aspectFill" @click="setCover(index)" />
@@ -256,7 +256,7 @@ async function save() {
         </button>
       </view>
       <button
-        v-if="!springMarketplaceEnabled && images.length < 6"
+        v-if="images.length < 6"
         class="image-upload"
         :disabled="busy"
         :loading="uploading"

@@ -6,5 +6,6 @@ if [[ -f "$STARISLE_ROOT/.env" ]]; then
   source "$STARISLE_ROOT/.env"
   set +a
 fi
+export STARISLE_PRODUCT_IMAGE_DIR="${STARISLE_PRODUCT_IMAGE_DIR:-$STARISLE_ROOT/.tools/spring-uploads}"
 cd "$STARISLE_ROOT/backend"
 exec ./mvnw "-Dmaven.repo.local=$MAVEN_USER_HOME/repository" "$@"

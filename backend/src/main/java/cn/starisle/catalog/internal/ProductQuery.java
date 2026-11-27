@@ -24,7 +24,7 @@ public class ProductQuery {
     private static final String SEARCH = " AND (:q = '' OR LOCATE(:q, p.title) > 0) ";
     private static final String DETAIL_COLUMNS = """
             SELECT p.id, p.shop_id, s.name AS shop_name, p.title, p.subtitle, p.description,
-                   p.category, p.tags, p.images, p.price, p.stock, p.sold, p.cover_url, p.status
+                   p.category, p.tags, p.images, p.price, p.stock, p.sold, p.cover_url, p.status, p.management_version
             """;
     private final JdbcClient jdbc;
     private final ObjectMapper json;
@@ -92,7 +92,8 @@ public class ProductQuery {
         return new ProductDetail(rs.getString("id"), rs.getString("shop_id"), rs.getString("shop_name"),
                 rs.getString("title"), rs.getString("subtitle"), rs.getString("description"), rs.getString("category"),
                 textList(rs.getString("tags")), textList(rs.getString("images")), rs.getBigDecimal("price").toPlainString(),
-                rs.getInt("stock"), rs.getInt("sold"), rs.getString("cover_url"), rs.getString("status"), List.of());
+                rs.getInt("stock"), rs.getInt("sold"), rs.getString("cover_url"), rs.getString("status"),
+                rs.getLong("management_version"), List.of());
     }
 
     private List<ProductDetail> loadSkus(List<ProductDetail> products) {

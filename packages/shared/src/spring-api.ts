@@ -6,6 +6,10 @@ export const springApiBase = (import.meta.env.VITE_SPRING_API_BASE_URL || 'http:
   '',
 )
 
+export function springImageUrl(path: string): string {
+  return path.startsWith('/api/v1/images/') ? `${springApiBase}${path}` : path
+}
+
 export function springRequest<T>(
   path: string,
   method: 'GET' | 'POST' | 'PUT',

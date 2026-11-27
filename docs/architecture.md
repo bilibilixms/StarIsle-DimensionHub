@@ -64,6 +64,8 @@ flowchart LR
 | `GET /api/v1/products/{id}` | 查询公开商品详情及规格。 |
 | `GET /api/v1/merchant/products` | 按页查看自家商品及上架状态。 |
 | `POST /api/v1/merchant/products` | 创建草稿或上架商品，填写标题和至少一个含名称、价格、库存的规格。 |
+| `PUT /api/v1/merchant/products/{id}` | 保存商品及规格。提交 `expectedVersion`，已有规格修改库存时同时提交 `expectedStock`，省略库存时保留当前值。 |
+| `POST /api/v1/merchant/product-images`、`GET /api/v1/images/{id}.jpg` | 商家通过 multipart 字段 `file` 上传图片，再按返回的地址读取。商品可绑定本店上传的图片。 |
 | `GET /api/v1/merchant/products/{id}`、`PATCH /api/v1/merchant/products/{id}/publication` | 查看自家商品，或提交 `published` 切换上下架。店铺营业后方可上架。 |
 | `GET /api/v1/admin/shops/pending`、`POST /api/v1/admin/shops/{id}/approve` | 管理员查询待审核店铺并开通营业状态。 |
 | `GET /api/v1/marketplace` | 同步商品、店铺和可访问的订单。买家仅可读取自己的订单，商家仅可读取本店订单。 |
@@ -75,11 +77,11 @@ flowchart LR
 ## 数据与运行约定
 
 - 表结构由 Flyway 迁移脚本管理，已应用的脚本不修改，通过新版本继续迁移。
-- V1 创建店铺和商品表，V2 增加账号、角色、会话、店铺归属和规格。V3 为旧商品生成默认规格并补充目录字段，V4 增加结算记录、订单及订单项快照。测试数据在 Testcontainers 的临时数据库中单独准备。
+- V1 创建店铺和商品表，V2 增加账号、角色、会话、店铺归属和规格。V3 为旧商品生成默认规格并补充目录字段，V4 增加结算记录、订单及订单项快照，V5 增加商品编辑版本及图片归属。测试数据在 Testcontainers 的临时数据库中单独准备。
 - 商品价格与库存由数据库约束兜底。后续下单使用事务和带条件的库存更新，Redis 不承担库存或支付结果的唯一事实来源。
 - 新增支付能力时，订单金额和商品快照由后端计算，支付回调验签并按支付流水幂等处理。
 - Redis 先用于限流、临时状态和有实际收益的热点缓存，再按需要扩展。
-- 商品图片与头像后续通过文件存储适配器连接对象存储，数据库保存文件引用，不把二进制文件塞入业务表。
+- 商品图片保存在配置的目录中，数据库保存文件引用及店铺归属。修改商品图片不删除原文件，历史订单可继续读取封面。
 - 开发配置与密钥来自本地 `.env`；数据库、Redis 和后端默认只绑定本机地址。
 
 ## 验证范围

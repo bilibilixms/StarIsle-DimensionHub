@@ -39,8 +39,9 @@ public class SecurityConfig {
                         auth.requestMatchers(HttpMethod.POST, "/api/v1/auth/quick-login").permitAll();
                     }
                     auth.requestMatchers(HttpMethod.GET, "/api/v1/products", "/api/v1/products/{id}",
-                                "/api/v1/marketplace", "/actuator/health",
+                                "/api/v1/images/{id}.jpg", "/api/v1/marketplace", "/actuator/health",
                                 "/v3/api-docs", "/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**").permitAll()
+                        .requestMatchers(HttpMethod.HEAD, "/api/v1/images/{id}.jpg").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/register", "/api/v1/auth/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/logout").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/auth/session").authenticated()

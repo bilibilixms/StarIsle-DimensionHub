@@ -1,13 +1,21 @@
 package cn.starisle;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.Executors;
+import javax.imageio.ImageIO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -31,6 +39,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ApplicationIntegrationTest {
     private static final String ADMIN_PHONE = "13800000099";
     private static final String ADMIN_PASSWORD = "integration-admin-password";
+    @TempDir static Path imageDirectory;
     @Container
     static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.4");
 
@@ -50,6 +59,7 @@ class ApplicationIntegrationTest {
         registry.add("springdoc.swagger-ui.enabled", () -> true);
         registry.add("starisle.admin.phone", () -> ADMIN_PHONE);
         registry.add("starisle.admin.password", () -> ADMIN_PASSWORD);
+        registry.add("starisle.catalog.images-directory", () -> imageDirectory.toString());
     }
 
     @LocalServerPort int port;
@@ -288,6 +298,103 @@ class ApplicationIntegrationTest {
         assertThat(stock(first)).isZero();
     }
 
+    @Test
+    void merchantImagesAreDecodedAndOwnedByTheirShop() throws Exception {
+        var merchant = register("13800000009", "merchant");
+        var other = register("13800000008", "merchant");
+        var buyer = register("13800000001", "user");
+        String token = merchant.path("token").asString();
+
+        byte[] invalid = "not an image".getBytes(StandardCharsets.UTF_8);
+        assertThat(uploadImage(buyer.path("token").asString(), invalid).statusCode()).isEqualTo(403);
+        assertThat(uploadImage(token, invalid).statusCode()).isEqualTo(400);
+        assertThat(uploadImage(token, new byte[2 * 1024 * 1024 + 1]).statusCode()).isEqualTo(413);
+        var png = new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(2500, 500, BufferedImage.TYPE_INT_ARGB), "png", png);
+        var uploaded = uploadImage(token, png.toByteArray());
+        assertThat(uploaded.statusCode()).as(uploaded.body()).isEqualTo(201);
+        String image = json.readTree(uploaded.body()).path("data").path("url").asString();
+        var saved = client.send(HttpRequest.newBuilder(uri(image)).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(saved.statusCode()).isEqualTo(200);
+        assertThat(saved.headers().firstValue("Content-Type")).contains("image/jpeg");
+        var resized = ImageIO.read(new ByteArrayInputStream(saved.body()));
+        assertThat(resized.getWidth()).isEqualTo(1600);
+        assertThat(resized.getHeight()).isEqualTo(320);
+
+        var webp = Base64.getDecoder().decode("UklGRjIAAABXRUJQVlA4ICYAAABwAQCdASoMAAkAAUAmJZACdAFAAAD+8Lpr+4P1B/EFS4MttnkAAA==");
+        assertThat(uploadImage(token, webp).statusCode()).isEqualTo(201);
+        assertThat(uploadImage(token, saved.body()).statusCode()).isEqualTo(201);
+
+        String draft = """
+                {"title":"商品图片测试","images":["%s"],"skus":[{"name":"标准版","price":"19.90","stock":3}]}
+                """.formatted(image);
+        var otherDraft = send("POST", "/api/v1/merchant/products", draft, other.path("token").asString());
+        assertThat(otherDraft.statusCode()).as(otherDraft.body()).isEqualTo(403);
+        var ownDraft = send("POST", "/api/v1/merchant/products", draft, token);
+        assertThat(ownDraft.statusCode()).as(ownDraft.body()).isEqualTo(201);
+        assertThat(json.readTree(ownDraft.body()).path("data").path("coverUrl").asString()).isEqualTo(image);
+    }
+
+    @Test
+    void editingPricePreservesSkuIdentityAndSalesAndRejectsStaleInventory() throws Exception {
+        var merchant = register("13800000009", "merchant");
+        String token = merchant.path("token").asString();
+        String buyer = register("13800000001", "user").path("token").asString();
+        String admin = json.readTree(send("POST", "/api/v1/auth/login",
+                accountForm(ADMIN_PHONE, ADMIN_PASSWORD, "admin"), null).body()).path("data").path("token").asString();
+        var product = publish(merchant, admin, "调价测试");
+        String id = product.path("id").asString();
+        String sku = product.path("skus").get(0).path("id").asString();
+        String path = "/api/v1/merchant/products/" + id;
+
+        assertThat(checkout(checkoutForm(line(product, 1)), buyer, "before-edit-01").statusCode()).isEqualTo(200);
+        String form = """
+                {"title":"调价测试","expectedVersion":0,"published":true,
+                  "skus":[{"id":"%s","name":"更新版","price":"26.50"%s}]}
+                """;
+        String stockEdit = form.formatted(sku, ",\"stock\":6,\"expectedStock\":3");
+        assertThat(send("PUT", path, stockEdit, token).statusCode()).isEqualTo(409);
+        assertThat(stock(product)).isEqualTo(2);
+
+        String priceEdit = form.formatted(sku, "");
+        var updated = send("PUT", path, priceEdit, token, "price-edit-01");
+        assertThat(updated.statusCode()).as(updated.body()).isEqualTo(200);
+        var current = json.readTree(updated.body()).path("data");
+        assertThat(current.path("price").asString()).isEqualTo("26.50");
+        assertThat(current.path("managementVersion").asInt()).isEqualTo(1);
+        var variant = current.path("skus").get(0);
+        assertThat(variant.path("id").asString()).isEqualTo(sku);
+        assertThat(variant.path("stock").asInt()).isEqualTo(2);
+        assertThat(variant.path("sold").asInt()).isEqualTo(1);
+        var replay = send("PUT", path, priceEdit, token, "price-edit-01");
+        assertThat(replay.statusCode()).isEqualTo(200);
+        assertThat(json.readTree(replay.body()).path("data").path("managementVersion").asInt()).isEqualTo(1);
+        assertThat(send("PUT", path, priceEdit, token, "stale-edit-01").statusCode()).isEqualTo(409);
+
+        var item = snapshot(buyer).path("orders").get(0).path("items").get(0);
+        assertThat(item.path("unitPrice").asInt()).isEqualTo(1990);
+        assertThat(item.path("variant").asString()).isEqualTo("标准版");
+        assertThat(item.path("skuId").asString()).isEqualTo(sku);
+
+        String restock = form.replace("\"expectedVersion\":0", "\"expectedVersion\":1")
+                .formatted(sku, ",\"stock\":6,\"expectedStock\":2");
+        var restocked = send("PUT", path, restock, token);
+        assertThat(restocked.statusCode()).as(restocked.body()).isEqualTo(200);
+        assertThat(stock(product)).isEqualTo(6);
+    }
+
+    private HttpResponse<String> uploadImage(String token, byte[] bytes) throws Exception {
+        String boundary = "starisle-test-image-boundary";
+        String prefix = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test-image\""
+                + "\r\nContent-Type: application/octet-stream\r\n\r\n";
+        byte[] end = ("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8);
+        return client.send(HttpRequest.newBuilder(uri("/api/v1/merchant/product-images"))
+                .header("Authorization", "Bearer " + token)
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .POST(HttpRequest.BodyPublishers.ofByteArrays(List.of(prefix.getBytes(StandardCharsets.UTF_8), bytes, end)))
+                .build(), HttpResponse.BodyHandlers.ofString());
+    }
+
     private JsonNode publish(JsonNode merchant, String admin, String title) throws Exception {
         String id = merchant.path("shopId").asString();
         assertThat(send("POST", "/api/v1/admin/shops/" + id + "/approve", null, admin).statusCode()).isEqualTo(200);
@@ -340,10 +447,15 @@ class ApplicationIntegrationTest {
     }
 
     private HttpResponse<String> send(String method, String path, String body, String token) throws Exception {
+        return send(method, path, body, token, null);
+    }
+
+    private HttpResponse<String> send(String method, String path, String body, String token, String key) throws Exception {
         var request = HttpRequest.newBuilder(uri(path)).method(method, body == null
                 ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
         if (body != null) request.header("Content-Type", "application/json");
         if (token != null) request.header("Authorization", "Bearer " + token);
+        if (key != null) request.header("X-Idempotency-Key", key);
         return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
     }
 

@@ -571,7 +571,6 @@ async function toggleProduct(id: string) {
               {{ product.published ? '下架' : '上架' }}
             </button>
             <button
-              v-if="!springMarketplaceEnabled"
               class="edit-action"
               @click="editProduct(product)"
               :data-testid="`edit-${product.id}`"

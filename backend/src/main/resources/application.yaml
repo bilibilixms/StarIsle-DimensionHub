@@ -17,6 +17,10 @@ spring:
   flyway:
     enabled: true
     clean-disabled: true
+  servlet:
+    multipart:
+      max-file-size: 2MB
+      max-request-size: 3MB
 server:
   address: ${SERVER_ADDRESS:127.0.0.1}
   port: ${SERVER_PORT:8080}
@@ -34,6 +38,8 @@ springdoc:
   swagger-ui:
     enabled: ${API_DOCS_ENABLED:false}
 starisle:
+  catalog:
+    images-directory: ${STARISLE_PRODUCT_IMAGE_DIR:.tools/spring-uploads}
   admin:
     phone: ${STARISLE_ADMIN_PHONE:}
     password: ${STARISLE_ADMIN_PASSWORD:}

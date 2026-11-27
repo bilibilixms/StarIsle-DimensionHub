@@ -7,7 +7,7 @@ import {
   type DemoRecipient,
   type DemoShop,
 } from './demo-domain'
-import { springApiBase, springRequest } from './spring-api'
+import { springApiBase, springImageUrl, springRequest } from './spring-api'
 
 interface CatalogSku {
   id: string
@@ -31,6 +31,7 @@ interface CatalogProduct {
   stock: number
   sold: number
   status: string
+  managementVersion: number
   skus: CatalogSku[]
 }
 
@@ -88,7 +89,8 @@ function cents(price: string): number {
 function product({ skus, coverUrl, status, ...entry }: CatalogProduct): DemoProduct {
   return {
     ...entry,
-    cover: coverUrl || DEMO_ASSETS.figurine,
+    cover: coverUrl ? springImageUrl(coverUrl) : DEMO_ASSETS.figurine,
+    images: entry.images.map(springImageUrl),
     price: cents(entry.price),
     published: status === 'PUBLISHED',
     tag: entry.tags[0] || '',
@@ -99,7 +101,7 @@ function product({ skus, coverUrl, status, ...entry }: CatalogProduct): DemoProd
 function order(entry: Order): DemoOrder {
   const items = entry.items.map(({ coverUrl, ...item }) => ({
     ...item,
-    cover: coverUrl || DEMO_ASSETS.figurine,
+    cover: coverUrl ? springImageUrl(coverUrl) : DEMO_ASSETS.figurine,
     amount: item.unitPrice * item.quantity,
   }))
   const first = items[0]!

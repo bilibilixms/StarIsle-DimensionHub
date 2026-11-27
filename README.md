@@ -140,12 +140,14 @@ CI=true VITE_MARKETPLACE_BACKEND=spring ./scripts/npm.sh run dev:user:h5
 CI=true VITE_MARKETPLACE_BACKEND=spring ./scripts/npm.sh run dev:merchant:h5
 ```
 
-微信开发者工具可使用相同环境变量运行 `dev:user` 和 `dev:merchant`。后端地址默认为 `http://127.0.0.1:8080`，可通过 `VITE_SPRING_API_BASE_URL` 修改。Spring Boot 联调覆盖商品发布和上下架、购物车结算、模拟支付、扣减库存、发货和确认收货。发布表单可选用内置示例图。
+微信开发者工具可使用相同环境变量运行 `dev:user` 和 `dev:merchant`。后端地址默认为 `http://127.0.0.1:8080`，可通过 `VITE_SPRING_API_BASE_URL` 修改。Spring Boot 联调覆盖商品发布、编辑和上下架、购物车结算、模拟支付、扣减库存、发货和确认收货。修改价格或资料时保留实时库存，主动调整库存时校验编辑前的库存。
+
+商家可上传最多 6 张 JPG、PNG 或 WebP 静态图片，每张不超过 2 MB。图片经后端处理后保存在 `.tools/spring-uploads/`，可通过 `STARISLE_PRODUCT_IMAGE_DIR` 修改路径。MySQL 保存图片归属和商品引用。历史订单保留成交时的商品图片、价格和规格。
 
 如果 Windows 无法访问 WSL 内的 Java 服务，可在启动 Spring Boot 时加上 `JAVA_TOOL_OPTIONS=-Djava.net.preferIPv4Stack=true`，让 WSL 将 IPv4 环回端口转发给 Windows。
 
 ## 开发规划
 
-当前先推进用户和商家流程，画师、漫展方保留入口但暂未开放。Spring Boot 联调已覆盖交易主流程，商品媒体上传、编辑、评价及售后待接入。管理员界面当前隐藏，已实现店铺审核 API。
+当前先推进用户和商家流程，画师、漫展方保留入口但暂未开放。Spring Boot 联调已覆盖交易主流程，商品视频、评价及售后待接入。管理员界面当前隐藏，已实现店铺审核 API。
 
 具体页面、两人分工和验收条件见 [应用端开发规划](docs/development-plan.md)。已有后端与长期模块约定见 [架构说明](docs/architecture.md)。

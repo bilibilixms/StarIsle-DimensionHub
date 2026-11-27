@@ -266,10 +266,13 @@ async function requestSpring(
 async function sendSpringCommand(command: DemoCommand, token?: string, operationId?: string) {
   const id = encodeURIComponent(String(command.id))
   switch (command.type) {
-    case 'createProduct': {
+    case 'createProduct':
+    case 'editProduct': {
       const images = command.images as string[] | undefined
       const skus = command.skus ?? [{ name: '默认款', price: command.price, stock: command.stock }]
-      await springRequest('/merchant/products', 'POST', token, {
+      const editing = command.type === 'editProduct'
+      const current = editing ? `/merchant/products/${id}` : '/merchant/products'
+      await springRequest(current, editing ? 'PUT' : 'POST', token, {
         title: command.title,
         subtitle: command.subtitle,
         description: command.description,
@@ -278,7 +281,11 @@ async function sendSpringCommand(command: DemoCommand, token?: string, operation
         images,
         coverUrl: images?.[0] ?? command.cover,
         published: command.published ?? true,
-        skus,
+        skus: (skus as { id?: string; [key: string]: unknown }[]).map(({ id, ...sku }) => ({
+          ...sku,
+          ...(editing && id && /^[1-9]\d*$/.test(id) ? { id } : {}),
+        })),
+        ...(editing ? { expectedVersion: command.expectedVersion } : {}),
       }, operationId)
       return
     }

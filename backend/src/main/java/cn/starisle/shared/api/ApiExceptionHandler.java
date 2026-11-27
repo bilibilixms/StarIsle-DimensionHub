@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -18,6 +19,11 @@ public class ApiExceptionHandler {
             ConstraintViolationException.class, HttpMessageNotReadableException.class, MissingRequestHeaderException.class})
     ResponseEntity<ApiResponse<Void>> badRequest(Exception exception) {
         return ResponseEntity.badRequest().body(ApiResponse.error(400, "请求参数不正确"));
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    ResponseEntity<ApiResponse<Void>> uploadTooLarge() {
+        return ResponseEntity.status(413).body(ApiResponse.error(413, "商品图片不能超过 2 MB"));
     }
 
     @ExceptionHandler(ResponseStatusException.class)
