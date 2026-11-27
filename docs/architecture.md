@@ -17,7 +17,7 @@ flowchart LR
   API --> Redis[(Redis)]
 ```
 
-此图表达目标模块划分。当前仅实现商品只读接口，其他模块通过 `package-info.java` 记录边界，避免把预留目录误认为已完成的业务。
+此图表达目标模块划分。Spring Boot 已实现手机号账号、角色会话、店铺归属、商品读取及商家上架。小程序预览仍使用本地演示服务，收藏、订单和支付的 Spring Boot 模块目前记录业务边界。
 
 ## 模块边界
 
@@ -57,12 +57,22 @@ flowchart LR
 
 业务 ID 使用字符串传给前端，避免 JavaScript 对大整数丢失精度。金额在数据库使用 `DECIMAL`，在 JSON 中使用十进制字符串，前端展示时不转换为浮点数。HTTP 状态表达请求结果，已实现的业务接口在 JSON 中同时提供 `code` 和 `message`；健康检查和 OpenAPI 保持各自标准格式。
 
-当前未提供任何登录账号或令牌签发接口。私有接口默认拒绝访问，浏览器仅允许配置中的 CORS 来源。接入微信登录后再补充令牌验证、角色授权和店铺归属校验，继续保持权限默认关闭。
+| 接口 | 用途 |
+| --- | --- |
+| `POST /api/v1/auth/register`、`POST /api/v1/auth/login` | 提交 `phone`、`password` 和 `role`。`user` 和 `merchant` 可注册登录，`admin` 可登录。商家注册可提供 `shopName`，店铺初始状态为 `PENDING`。 |
+| `POST /api/v1/auth/logout` | 撤销当前 Bearer 会话。 |
+| `GET /api/v1/products/{id}` | 查询公开商品详情及规格。 |
+| `GET /api/v1/merchant/products` | 按页查看自家商品及上架状态。 |
+| `POST /api/v1/merchant/products` | 创建草稿或上架商品，填写标题和至少一个含名称、价格、库存的规格。 |
+| `GET /api/v1/merchant/products/{id}`、`PATCH /api/v1/merchant/products/{id}/publication` | 查看自家商品，或提交 `published` 切换上下架。店铺营业后方可上架。 |
+| `GET /api/v1/admin/shops/pending`、`POST /api/v1/admin/shops/{id}/approve` | 管理员查询待审核店铺并开通营业状态。 |
+
+注册和登录返回 `token` 与 `expiresAt`。商家接口通过 Bearer 令牌校验角色，通过店铺归属限制详情和写入操作。密码和会话令牌分别保存哈希和摘要。首次初始化管理员时同时设置 `STARISLE_ADMIN_PHONE` 和 `STARISLE_ADMIN_PASSWORD`，密码长度为 12–128 位。未设置时可正常启动，管理员账号需要另外初始化。
 
 ## 数据与运行约定
 
 - 表结构由 Flyway 迁移脚本管理，已应用的脚本不修改，通过新版本继续迁移。
-- 初始迁移仅创建店铺、商品两张表及约束；开发数据库不填充假商品。测试数据只存在于 Testcontainers 的临时数据库。
+- V1 创建店铺和商品表。V2 增加账号、角色、会话、店铺归属和规格。V1 已有商品保留原价与库存，可查询到空的规格列表。测试数据在 Testcontainers 的临时数据库中单独准备。
 - 商品价格与库存由数据库约束兜底。后续下单使用事务和带条件的库存更新，Redis 不承担库存或支付结果的唯一事实来源。
 - 新增支付能力时，订单金额和商品快照由后端计算，支付回调验签并按支付流水幂等处理。
 - Redis 先用于限流、临时状态和有实际收益的热点缓存，再按需要扩展。

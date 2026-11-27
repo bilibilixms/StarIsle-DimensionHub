@@ -27,6 +27,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class ApplicationIntegrationTest {
+    private static final String ADMIN_PHONE = "13800000099";
+    private static final String ADMIN_PASSWORD = "integration-admin-password";
     @Container
     static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.4");
 
@@ -44,6 +46,8 @@ class ApplicationIntegrationTest {
         registry.add("spring.data.redis.password", () -> "integration-password");
         registry.add("springdoc.api-docs.enabled", () -> true);
         registry.add("springdoc.swagger-ui.enabled", () -> true);
+        registry.add("starisle.admin.phone", () -> ADMIN_PHONE);
+        registry.add("starisle.admin.password", () -> ADMIN_PASSWORD);
     }
 
     @LocalServerPort int port;
@@ -56,6 +60,8 @@ class ApplicationIntegrationTest {
     void seedIsolatedDatabase() {
         jdbc.sql("DELETE FROM catalog_product").update();
         jdbc.sql("DELETE FROM merchant_shop").update();
+        jdbc.sql("DELETE FROM app_account_session").update();
+        jdbc.sql("DELETE FROM app_account WHERE phone <> :admin").param("admin", ADMIN_PHONE).update();
         jdbc.sql("INSERT INTO merchant_shop(id,name,status) VALUES (1,'星屿小铺','ACTIVE'),(2,'停业店铺','DISABLED')").update();
         jdbc.sql("""
                 INSERT INTO catalog_product(id,shop_id,title,price,stock,status) VALUES
@@ -83,7 +89,7 @@ class ApplicationIntegrationTest {
     }
 
     @Test
-    void rejectsInvalidPagingAndUnimplementedPrivateRoutes() throws Exception {
+    void rejectsInvalidPagingAndUnauthenticatedMerchantAccess() throws Exception {
         for (String query : new String[]{"page=0", "size=101", "page=abc", "q=" + "a".repeat(101)}) {
             var response = get("/api/v1/products?" + query);
             assertThat(response.statusCode()).as(query).isEqualTo(400);
@@ -115,6 +121,117 @@ class ApplicationIntegrationTest {
         var denied = client.send(HttpRequest.newBuilder(uri("/api/v1/products"))
                 .header("Origin", "https://untrusted.example").GET().build(), HttpResponse.BodyHandlers.ofString());
         assertThat(denied.statusCode()).isEqualTo(403);
+    }
+
+    @Test
+    void registersRolesWithOnePasswordAndRevokesSessionsOnLogout() throws Exception {
+        String userForm = accountForm("13800000000", "六位测试密码", "user");
+        var registration = send("POST", "/api/v1/auth/register", userForm, null);
+        assertThat(registration.statusCode()).isEqualTo(201);
+        var user = json.readTree(registration.body()).path("data");
+        String userToken = user.path("token").asString();
+        assertThat(userToken).matches("[A-Za-z0-9_-]{43}");
+        assertThat(send("POST", "/api/v1/auth/register", userForm, null).statusCode()).isEqualTo(409);
+        assertThat(send("POST", "/api/v1/auth/register",
+                accountForm("13800000000", "wrong-password", "merchant"), null).statusCode()).isEqualTo(409);
+        var merchant = send("POST", "/api/v1/auth/register",
+                accountForm("13800000000", "六位测试密码", "merchant"), null);
+        assertThat(merchant.statusCode()).isEqualTo(201);
+        var account = json.readTree(merchant.body()).path("data");
+        assertThat(account.path("accountId").asString()).isEqualTo(user.path("accountId").asString());
+        assertThat(account.path("shopStatus").asString()).isEqualTo("PENDING");
+        assertThat(send("POST", "/api/v1/auth/login",
+                accountForm("13800000000", "wrong-password", "user"), null).statusCode()).isEqualTo(401);
+        assertThat(send("POST", "/api/v1/auth/login", userForm, null).statusCode()).isEqualTo(200);
+        assertThat(jdbc.sql("SELECT password_hash FROM app_account WHERE phone = '13800000000'")
+                .query(String.class).single())
+                .doesNotContain("六位测试密码");
+        assertThat(send("POST", "/api/v1/auth/logout", null, userToken).statusCode()).isEqualTo(200);
+        assertThat(send("POST", "/api/v1/auth/logout", null, userToken).statusCode()).isEqualTo(401);
+        assertThat(send("POST", "/api/v1/auth/logout", null, account.path("token").asString()).statusCode())
+                .isEqualTo(200);
+    }
+
+    @Test
+    void merchantPublishesSkusToPublicCatalogAndCanOnlyManageOwnedProducts() throws Exception {
+        String merchantPhone = "13800000009";
+        var merchant = register(merchantPhone, "merchant");
+        var other = register("13800000008", "merchant");
+        var user = register("13800000001", "user");
+        String token = merchant.path("token").asString();
+        String merchantProducts = "/api/v1/merchant/products";
+        String productForm = """
+                {"title":"星星挂件","description":"测试规格","published":true,"skus":[
+                    {"name":"标准版","price":"19.90","stock":5},
+                    {"name":"礼盒版","price":"29.90","stock":3}
+                ]}
+                """;
+        assertThat(send("POST", merchantProducts, productForm, user.path("token").asString()).statusCode())
+                .isEqualTo(403);
+        assertThat(send("POST", merchantProducts, productForm, token).statusCode()).isEqualTo(403);
+
+        var draft = send("POST", merchantProducts, productForm.replace("true", "false"), token);
+        assertThat(draft.statusCode()).isEqualTo(201);
+        var item = json.readTree(draft.body()).path("data");
+        String id = item.path("id").asString();
+        String publication = merchantProducts + "/" + id + "/publication";
+        assertThat(item.path("price").asString()).isEqualTo("19.90");
+        assertThat(item.path("stock").asInt()).isEqualTo(8);
+        assertThat(item.path("skus").size()).isEqualTo(2);
+        assertThat(get("/api/v1/products/" + id).statusCode()).isEqualTo(404);
+        assertThat(json.readTree(send("GET", merchantProducts, null, token).body())
+                .path("data").path("total").asInt()).isEqualTo(1);
+        assertThat(json.readTree(send("GET", merchantProducts, null, other.path("token").asString()).body())
+                .path("data").path("total").asInt()).isZero();
+
+        String adminForm = accountForm(ADMIN_PHONE, ADMIN_PASSWORD, "admin");
+        assertThat(send("POST", "/api/v1/auth/register", adminForm, null).statusCode()).isEqualTo(400);
+        var admin = send("POST", "/api/v1/auth/login", adminForm, null);
+        assertThat(admin.statusCode()).isEqualTo(200);
+        String adminToken = json.readTree(admin.body()).path("data").path("token").asString();
+        String approval = "/api/v1/admin/shops/" + merchant.path("shopId").asString() + "/approve";
+        assertThat(send("POST", approval, null, token).statusCode()).isEqualTo(403);
+        var pending = send("GET", "/api/v1/admin/shops/pending", null, adminToken);
+        assertThat(pending.statusCode()).isEqualTo(200);
+        assertThat(json.readTree(pending.body()).path("data").path("total").asInt()).isEqualTo(2);
+        assertThat(send("POST", approval, null, adminToken).statusCode()).isEqualTo(200);
+        String publish = "{\"published\":true}";
+        assertThat(send("PATCH", publication, publish, other.path("token").asString()).statusCode())
+                .isEqualTo(404);
+        assertThat(send("PATCH", publication, publish, token).statusCode()).isEqualTo(200);
+        assertThat(send("PATCH", publication, publish, token).statusCode()).isEqualTo(200);
+        var published = get("/api/v1/products/" + id);
+        assertThat(published.statusCode()).isEqualTo(200);
+        assertThat(json.readTree(published.body()).path("data").path("skus").get(1).path("stock").asInt())
+                .isEqualTo(3);
+        var products = json.readTree(get("/api/v1/products").body()).path("data").path("items");
+        assertThat(products.get(0).path("id").asString()).isEqualTo(id);
+
+        var repeatedSku = send("POST", merchantProducts, productForm.replace("礼盒版", "标准版"), token);
+        assertThat(repeatedSku.statusCode()).isEqualTo(409);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM catalog_product WHERE title = '星星挂件'")
+                .query(Integer.class).single()).isEqualTo(1);
+
+        assertThat(send("PATCH", publication, "{\"published\":false}", token).statusCode()).isEqualTo(200);
+        assertThat(get("/api/v1/products/" + id).statusCode()).isEqualTo(404);
+    }
+
+    private JsonNode register(String phone, String role) throws Exception {
+        var response = send("POST", "/api/v1/auth/register", accountForm(phone, "123456", role), null);
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(201);
+        return json.readTree(response.body()).path("data");
+    }
+
+    private String accountForm(String phone, String password, String role) {
+        return "{\"phone\":\"%s\",\"password\":\"%s\",\"role\":\"%s\"}".formatted(phone, password, role);
+    }
+
+    private HttpResponse<String> send(String method, String path, String body, String token) throws Exception {
+        var request = HttpRequest.newBuilder(uri(path)).method(method, body == null
+                ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
+        if (body != null) request.header("Content-Type", "application/json");
+        if (token != null) request.header("Authorization", "Bearer " + token);
+        return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private HttpResponse<String> get(String path) throws Exception {

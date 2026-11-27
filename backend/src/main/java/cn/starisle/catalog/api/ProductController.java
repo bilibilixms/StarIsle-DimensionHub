@@ -6,8 +6,10 @@ import cn.starisle.shared.api.PageResult;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -26,5 +28,10 @@ public class ProductController {
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
         return ApiResponse.ok(products.list(q, page, size));
+    }
+
+    @GetMapping("/api/v1/products/{id}")
+    public ApiResponse<ProductDetail> detail(@PathVariable @Positive long id) {
+        return ApiResponse.ok(products.detail(id));
     }
 }
