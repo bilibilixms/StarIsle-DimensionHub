@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
 import {
   DEMO_ASSETS,
+  DemoRequestError,
   money,
   productVariants,
   productTags,
@@ -15,8 +16,8 @@ import {
 import { uploadProductImage } from '@starisle/shared/product-images'
 import { uploadProductVideo } from '@starisle/shared/product-videos'
 
-const props = defineProps<{ product?: DemoProduct }>()
-const emit = defineEmits<{ saved: [state: DemoState]; busy: [value: boolean] }>()
+const props = defineProps<{ product?: DemoProduct; refreshing: boolean }>()
+const emit = defineEmits<{ saved: [state: DemoState]; busy: [value: boolean]; conflict: [] }>()
 const title = ref(props.product?.title || '')
 const subtitle = ref(props.product?.subtitle || '')
 const description = ref(props.product?.description || '')
@@ -160,7 +161,7 @@ function changePublished(event: unknown) {
   published.value = !!(event as { detail?: { value?: boolean } }).detail?.value
 }
 async function save() {
-  if (busy.value) return
+  if (busy.value || props.refreshing) return
   error.value = ''
   saving.value = true
   try {
@@ -219,6 +220,7 @@ async function save() {
       icon: 'success',
     })
   } catch (cause) {
+    if (cause instanceof DemoRequestError && cause.status === 409) emit('conflict')
     error.value = cause instanceof Error ? cause.message : '保存失败，请重试'
   } finally {
     saving.value = false
@@ -527,7 +529,7 @@ async function save() {
     </text>
     <button
       class="primary-button editor-save"
-      :disabled="busy"
+      :disabled="busy || refreshing"
       :loading="saving"
       data-testid="save-product"
       @click="save"

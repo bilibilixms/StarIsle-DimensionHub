@@ -26,7 +26,7 @@ import {
   type DemoState,
 } from '@starisle/shared/demo'
 
-const { state, sync, syncError, connected, syncing } = useDemoSync('merchant')
+const { state, refresh, sync, syncError, connected, syncing } = useDemoSync('merchant')
 const canSell = computed(
   () =>
     (!state.value.shop.status || state.value.shop.status === 'ACTIVE') &&
@@ -56,9 +56,21 @@ const restockReturn = ref(false)
 const productId = ref('')
 const editingProduct = ref<DemoProduct>()
 const editorBusy = ref(false)
+const refreshingProducts = ref(false)
 function productSaved(result: DemoState) {
   state.value = result
   sheet.value = ''
+}
+async function refreshAfterProductConflict() {
+  refreshingProducts.value = true
+  try {
+    refresh()
+    // A poll that started before the conflict may still carry the old stock.
+    if (syncing.value) await sync()
+    await sync()
+  } finally {
+    refreshingProducts.value = false
+  }
 }
 const shopName = ref('')
 const shopDescription = ref('')
@@ -580,6 +592,7 @@ async function toggleProduct(id: string) {
             </button>
             <button
               class="edit-action"
+              :disabled="refreshingProducts"
               @click="editProduct(product)"
               :data-testid="`edit-${product.id}`"
             >
@@ -818,8 +831,10 @@ async function toggleProduct(id: string) {
       <ProductEditor
         v-if="sheet === 'product'"
         :product="editingProduct"
+        :refreshing="refreshingProducts"
         @busy="editorBusy = $event"
         @saved="productSaved"
+        @conflict="refreshAfterProductConflict"
       />
     </Sheet>
     <Sheet :visible="sheet === 'shop'" title="打理你的小店" @close="!busy && (sheet = '')">

@@ -206,11 +206,13 @@ function merge(
   }
   return save(data, storageKey, role)
 }
-class DemoRequestError extends Error {
+export class DemoRequestError extends Error {
   definite: boolean
-  constructor(message: string, definite: boolean) {
+  status?: number
+  constructor(message: string, definite: boolean, status?: number) {
     super(message)
     this.definite = definite
+    this.status = status
   }
 }
 interface MarketplaceResult {
@@ -257,6 +259,7 @@ function request(
             new DemoRequestError(
               body?.message || '演示服务暂时不可用，请稍后重试',
               response.statusCode < 500,
+              response.statusCode,
             ),
           )
         }
@@ -292,7 +295,11 @@ async function requestSpring(
       clearDemoSession()
       openLogin(role)
     }
-    throw new DemoRequestError(error.message, !completed && error.status >= 400 && error.status < 500)
+    throw new DemoRequestError(
+      error.message,
+      !completed && error.status >= 400 && error.status < 500,
+      error.status,
+    )
   }
 }
 

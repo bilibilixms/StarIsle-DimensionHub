@@ -77,7 +77,7 @@ const usedTones = {
   share: ['ink'],
   settings: ['muted', 'orange'],
   refund: ['pink'],
-  message: ['purple'],
+  message: ['purple', 'orange'],
 }
 for (const app of targets) {
   const assetDir = resolve(app, 'src/static/demo')
