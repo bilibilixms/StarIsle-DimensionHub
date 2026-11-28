@@ -389,6 +389,78 @@ class ApplicationIntegrationTest {
     }
 
     @Test
+    void addressBookIsPrivateAndKeepsOneDefaultWithoutChangingOrderSnapshots() throws Exception {
+        var merchant = register("13800000009", "merchant");
+        String seller = merchant.path("token").asString();
+        String buyer = register("13800000001", "user").path("token").asString();
+        String other = register("13800000002", "user").path("token").asString();
+        String path = "/api/v1/orders/addresses";
+        assertThat(get(path).statusCode()).isEqualTo(401);
+        assertThat(send("GET", path, null, seller).statusCode()).isEqualTo(403);
+        assertThat(snapshot(null).has("addressBook")).isFalse();
+        assertThat(snapshot(seller).has("addressBook")).isFalse();
+
+        String address = """
+                {"recipient":{"name":"小星","phone":"13800000001","address":"上海市 模拟路 1 号"},"makeDefault":false}
+                """;
+        var first = send("POST", path, address, buyer, "address-one");
+        assertThat(first.statusCode()).as(first.body()).isEqualTo(201);
+        String firstId = json.readTree(first.body()).path("data").path("savedAddressId").asString();
+        assertThat(snapshot(buyer).path("addressBook").path("defaultAddressId").asString()).isEqualTo(firstId);
+        assertThat(send("POST", path, address, buyer, "address-one").body()).isEqualTo(first.body());
+        String alternate = address.replace("1 号", "2 号");
+        assertThat(send("POST", path, alternate, buyer, "address-one").statusCode()).isEqualTo(409);
+        assertThat(send("POST", path, address.replace("13800000001", "bad"), buyer, "bad-address").statusCode())
+                .isEqualTo(400);
+        var second = send("POST", path, alternate, buyer, "address-two");
+        String secondId = json.readTree(second.body()).path("data").path("savedAddressId").asString();
+        assertThat(second.statusCode()).as(second.body()).isEqualTo(201);
+        assertThat(snapshot(other).path("addressBook").path("addresses").size()).isZero();
+        assertThat(send("PUT", path + "/" + firstId, alternate, other).statusCode()).isEqualTo(404);
+        assertThat(send("PUT", path + "/" + firstId + "/default", null, other).statusCode()).isEqualTo(404);
+        assertThat(send("DELETE", path + "/" + firstId, null, other).statusCode()).isEqualTo(404);
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> send("PUT", path + "/" + firstId + "/default", null, buyer));
+            var b = executor.submit(() -> send("PUT", path + "/" + secondId + "/default", null, buyer));
+            assertThat(a.get().statusCode()).isEqualTo(200);
+            assertThat(b.get().statusCode()).isEqualTo(200);
+        }
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM buyer_address WHERE is_default = TRUE").query(Integer.class).single())
+                .isEqualTo(1);
+        assertThat(send("PUT", path + "/" + secondId + "/default", null, buyer).statusCode()).isEqualTo(200);
+        String admin = json.readTree(send("POST", "/api/v1/auth/login",
+                accountForm(ADMIN_PHONE, ADMIN_PASSWORD, "admin"), null).body()).path("data").path("token").asString();
+        var product = publish(merchant, admin, "地址快照测试");
+        var ordered = checkout("""
+                {"items":[%s],"recipient":{"name":"小星","phone":"13800000001","address":"上海市 模拟路 2 号"}}
+                """.formatted(line(product, 1)), buyer, "address-order");
+        assertThat(ordered.statusCode()).as(ordered.body()).isEqualTo(200);
+
+        var edited = send("PUT", path + "/" + secondId, address.replace("1 号", "3 号").replace("false", "true"), buyer);
+        assertThat(edited.statusCode()).as(edited.body()).isEqualTo(200);
+        var deleted = send("DELETE", path + "/" + secondId, null, buyer);
+        assertThat(deleted.statusCode()).as(deleted.body()).isEqualTo(200);
+        var latest = snapshot(buyer);
+        assertThat(latest.path("addressBook").path("defaultAddressId").asString()).isEqualTo(firstId);
+        assertThat(latest.path("orders").get(0).path("recipient").path("address").asString())
+                .isEqualTo("上海市 模拟路 2 号");
+        assertThat(send("POST", path, alternate, buyer, "address-two").statusCode()).isEqualTo(201);
+        assertThat(snapshot(buyer).path("addressBook").path("addresses").size()).isEqualTo(1);
+
+        String legacy = """
+                {"name":"旧设备收货人","phone":"13800000001","address":"上海市 模拟路 4 号"}
+                """;
+        var imported = send("POST", path + "/import", legacy, buyer);
+        assertThat(imported.statusCode()).as(imported.body()).isEqualTo(200);
+        assertThat(send("POST", path + "/import", legacy, buyer).body()).isEqualTo(imported.body());
+        assertThat(send("POST", path + "/import", legacy.replace("4 号", "5 号"), buyer).statusCode()).isEqualTo(200);
+        var withLegacy = snapshot(buyer).path("addressBook");
+        assertThat(withLegacy.path("addresses").size()).isEqualTo(3);
+        assertThat(withLegacy.path("defaultAddressId").asString()).isEqualTo(firstId);
+    }
+
+    @Test
     void editingPricePreservesSkuIdentityAndSalesAndRejectsStaleInventory() throws Exception {
         var merchant = register("13800000009", "merchant");
         String token = merchant.path("token").asString();

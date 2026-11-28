@@ -9,7 +9,6 @@ import {
   saveDemoAddress,
   removeDemoAddress,
   setDefaultDemoAddress,
-  getDemoState,
   type DemoRecipient,
   type DemoAddress,
 } from '@starisle/shared/demo'
@@ -17,20 +16,24 @@ import AddressEditor from './AddressEditor.vue'
 const props = defineProps<{ draftId?: string; add?: boolean }>()
 const { state, refresh } = useDemoSync()
 const editing = ref(false)
+const busy = ref(false)
 const activeId = ref<string>()
 const empty = (): DemoRecipient => ({ name: '', phone: '', address: '' })
 const form = ref<DemoRecipient>(empty())
 const makeDefault = ref(false)
 const actionError = ref('')
-const selectedId = computed(() =>
-  props.draftId ? getCheckoutDraft(props.draftId)?.addressId : undefined,
-)
+const selectedId = computed(() => {
+  void state.value
+  return props.draftId ? getCheckoutDraft(props.draftId)?.addressId : undefined
+})
 const statusHeight = uni.getSystemInfoSync().statusBarHeight || 0
 function back() {
+  if (busy.value) return
   if (getCurrentPages().length > 1) uni.navigateBack()
   else uni.reLaunch({ url: '/pages/index/index?tab=profile' })
 }
 function edit(address?: DemoAddress) {
+  if (busy.value) return
   activeId.value = address?.id
   form.value = address
     ? { name: address.name, phone: address.phone, address: address.address }
@@ -48,32 +51,54 @@ function choose(id: string) {
     actionError.value = cause instanceof Error ? cause.message : '选择失败'
   }
 }
-function save(recipient: DemoRecipient, isDefault: boolean) {
+function closeEditor() {
+  if (!busy.value) editing.value = false
+}
+async function save(recipient: DemoRecipient, isDefault: boolean) {
+  if (busy.value) return
+  busy.value = true
+  actionError.value = ''
+  let savedId: string | undefined
   try {
-    const address = saveDemoAddress(recipient, activeId.value, isDefault)
+    const address = await saveDemoAddress(recipient, activeId.value, isDefault)
     refresh()
     editing.value = false
-    if (props.draftId) choose(address.id)
+    savedId = address.id
   } catch (cause) {
     actionError.value = cause instanceof Error ? cause.message : '保存失败'
+  } finally {
+    busy.value = false
   }
+  if (savedId && props.draftId) choose(savedId)
 }
-function setDefault(id: string) {
+async function setDefault(id: string) {
+  if (busy.value) return
+  busy.value = true
+  actionError.value = ''
   try {
-    state.value = setDefaultDemoAddress(id)
+    state.value = await setDefaultDemoAddress(id)
   } catch (cause) {
     actionError.value = cause instanceof Error ? cause.message : '设置失败'
+  } finally {
+    busy.value = false
   }
 }
 function remove(id: string) {
+  if (busy.value) return
   uni.showModal({
     title: '删除收货地址',
     content: '删除后，未提交订单需要重新选择收货地址。已生成订单的地址记录会保留。',
     confirmText: '删除',
-    success(result) {
-      if (result.confirm) {
-        removeDemoAddress(id)
-        state.value = getDemoState()
+    async success(result) {
+      if (!result.confirm || busy.value) return
+      busy.value = true
+      actionError.value = ''
+      try {
+        state.value = await removeDemoAddress(id)
+      } catch (cause) {
+        actionError.value = cause instanceof Error ? cause.message : '删除失败'
+      } finally {
+        busy.value = false
       }
     },
   })
@@ -94,7 +119,7 @@ onMounted(() => {
       <text class="address-tip">
         {{ draftId ? '选择本次订单的收货地址。' : '管理收货地址，让每一份心动准确送达。' }}
       </text>
-      <text v-if="actionError" class="form-error" role="alert">{{ actionError }}</text>
+      <text v-if="actionError && !editing" class="form-error" role="alert">{{ actionError }}</text>
       <view
         v-for="address in state.addresses"
         :key="address.id"
@@ -102,7 +127,7 @@ onMounted(() => {
         :class="{ chosen: address.id === selectedId }"
         :data-testid="`address-${address.id}`"
       >
-        <button class="address-select" :disabled="!draftId" @click="choose(address.id)">
+        <button class="address-select" :disabled="!draftId || busy" @click="choose(address.id)">
           <view class="address-person">
             <text>{{ address.name }}</text>
             <text>{{ address.phone }}</text>
@@ -119,6 +144,7 @@ onMounted(() => {
         <view class="address-tools">
           <button
             v-if="address.id !== state.defaultAddressId"
+            :disabled="busy"
             data-testid="set-default-address"
             @click="setDefault(address.id)"
           >
@@ -126,11 +152,12 @@ onMounted(() => {
           </button>
           <text v-else class="default-note">默认收货地址</text>
           <view class="address-actions">
-            <button data-testid="edit-address" @click="edit(address)">编辑</button>
-            <button data-testid="delete-address" @click="remove(address.id)">删除</button>
+            <button data-testid="edit-address" :disabled="busy" @click="edit(address)">编辑</button>
+            <button data-testid="delete-address" :disabled="busy" @click="remove(address.id)">删除</button>
             <button
               v-if="draftId"
               class="use-address"
+              :disabled="busy"
               data-testid="use-address"
               @click="choose(address.id)"
             >
@@ -144,19 +171,21 @@ onMounted(() => {
         <text class="empty-title">添加第一份收货地址</text>
         <text class="empty-copy">填写收货信息后，就可以继续下单。</text>
       </view>
-      <button class="primary-button add-address" data-testid="add-address" @click="edit()">
+      <button class="primary-button add-address" data-testid="add-address" :disabled="busy" @click="edit()">
         新增收货地址
       </button>
     </view>
     <Sheet
       :visible="editing"
       :title="activeId ? '编辑收货地址' : '新增收货地址'"
-      @close="editing = false"
+      @close="closeEditor"
     >
       <AddressEditor
         :value="form"
         :make-default="makeDefault"
         :label="draftId ? '保存并使用' : '保存地址'"
+        :busy="busy"
+        :save-error="actionError"
         @save="save"
       />
     </Sheet>

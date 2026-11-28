@@ -10,6 +10,7 @@ import {
   type DemoShop,
 } from './demo-domain'
 import { springApiBase, springMediaUrl, springRequest } from './spring-api'
+import type { SpringAddressBook } from './spring-addresses'
 
 interface CatalogSku {
   id: string
@@ -86,6 +87,7 @@ interface Snapshot {
   shops: ShopProfile[]
   orders: Order[]
   reviews: DemoReviewView[]
+  addressBook?: SpringAddressBook
 }
 
 const fulfillmentStatuses = {
@@ -160,28 +162,33 @@ function order(entry: Order): DemoOrder {
 }
 
 let snapshotRevision = 0
-export async function loadSpringMarketplace(token?: string): Promise<DemoMarketplaceView> {
+export async function loadSpringMarketplace(
+  token?: string,
+): Promise<{ state: DemoMarketplaceView; addressBook?: SpringAddressBook }> {
   const revision = (snapshotRevision = Math.max(snapshotRevision + 1, Date.now()))
   const snapshot = await springRequest<Snapshot>('/marketplace', 'GET', token)
   const shops = snapshot.shops.map(
     ({ status, ...shop }): DemoShop => ({ ...shop, status: status === 'DISABLED' ? 'SUSPENDED' : status }),
   )
   return {
-    version: 1,
-    datasetId: springApiBase,
-    revision,
-    shops,
-    shop: shops[0] || { name: '星屿', description: '' },
-    products: snapshot.products.map(product),
-    orders: snapshot.orders.map(order),
-    reviews: (snapshot.reviews || []).map((review) => ({
-      ...review,
-      images: review.images.map(springMediaUrl),
-      createdAt: new Date(review.createdAt).toLocaleString('zh-CN'),
-      reply: review.reply ? {
-        content: review.reply.content,
-        createdAt: new Date(review.reply.createdAt).toLocaleString('zh-CN'),
-      } : undefined,
-    })),
+    addressBook: snapshot.addressBook,
+    state: {
+      version: 1,
+      datasetId: springApiBase,
+      revision,
+      shops,
+      shop: shops[0] || { name: '星屿', description: '' },
+      products: snapshot.products.map(product),
+      orders: snapshot.orders.map(order),
+      reviews: (snapshot.reviews || []).map((review) => ({
+        ...review,
+        images: review.images.map(springMediaUrl),
+        createdAt: new Date(review.createdAt).toLocaleString('zh-CN'),
+        reply: review.reply ? {
+          content: review.reply.content,
+          createdAt: new Date(review.reply.createdAt).toLocaleString('zh-CN'),
+        } : undefined,
+      })),
+    },
   }
 }

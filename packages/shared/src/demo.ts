@@ -24,6 +24,12 @@ import {
 import { getDemoSession, clearDemoSession, openLogin, demoApiBase, requireDemoLogin } from './auth'
 import { ApiError } from './index'
 import { springApiBase, springMarketplaceEnabled, springRequest } from './spring-api'
+import {
+  requestAddressAction,
+  requestAddressSave,
+  requestLegacyAddress,
+  type SpringAddressBook,
+} from './spring-addresses'
 import { loadSpringMarketplace } from './spring-marketplace'
 export {
   DEMO_ASSETS,
@@ -95,6 +101,8 @@ interface LocalData {
   pending: Record<string, string>
   addresses: DemoAddress[]
   defaultAddressId?: string
+  addressBookRevision?: number
+  legacyAddressIds?: Record<string, string>
   checkout?: CheckoutDraft
 }
 export interface DemoCheckout {
@@ -132,9 +140,7 @@ function load(storageKey = key()): LocalData {
     getDemoSession()?.account.id === 'demo-user'
       ? (uni.getStorageSync('starisle.visual-demo.v1') as Partial<DemoState> | undefined)
       : undefined
-  const defaultBuyer = springMarketplaceEnabled
-    ? getDemoSession()?.role === 'user' && getDemoSession()?.account.phone === DEMO_RECIPIENT.phone
-    : getDemoSession()?.account.id === 'demo-user'
+  const defaultBuyer = !springMarketplaceEnabled && getDemoSession()?.account.id === 'demo-user'
   return {
     version: 2,
     favorites: Array.isArray(legacy?.favorites) ? legacy.favorites : [],
@@ -171,7 +177,12 @@ export function getDemoState(storageKey = key(), role = activeRole): DemoState {
     ],
   }
 }
-function merge(marketplace: DemoMarketplaceView, storageKey = key(), role = activeRole): DemoState {
+function merge(
+  marketplace: DemoMarketplaceView,
+  storageKey = key(),
+  role = activeRole,
+  addressBook?: SpringAddressBook,
+): DemoState {
   const data = load(storageKey)
   if (
     !data.marketplace ||
@@ -183,6 +194,7 @@ function merge(marketplace: DemoMarketplaceView, storageKey = key(), role = acti
     data.cart = data.cart.filter((item) => ids.has(item.productId))
     data.favorites = data.favorites.filter((id) => ids.has(id))
   }
+  if (addressBook) applyAddressBook(data, addressBook)
   return save(data, storageKey, role)
 }
 class DemoRequestError extends Error {
@@ -198,7 +210,7 @@ function request(
   operationId?: string,
   storageKey = key(),
   role = activeRole,
-): Promise<{ state: DemoMarketplaceView; orderIds?: string[] }> {
+): Promise<{ state: DemoMarketplaceView; orderIds?: string[]; addressBook?: SpringAddressBook }> {
   if (springMarketplaceEnabled) return requestSpring(command, operationId, storageKey, role)
   return new Promise((resolve, reject) => {
     uni.request({
@@ -246,13 +258,17 @@ async function requestSpring(
   operationId: string | undefined,
   storageKey: string,
   role: DemoRole,
-): Promise<{ state: DemoMarketplaceView; orderIds?: string[] }> {
-  const token = getDemoSession()?.token
+): Promise<{ state: DemoMarketplaceView; orderIds?: string[]; addressBook?: SpringAddressBook }> {
+  const session = getDemoSession()
+  const token = session?.token
   let completed = false
   try {
+    if (role === 'user' && session?.role === 'user') {
+      await migrateLocalAddresses(storageKey, session.token)
+    }
     const orderIds = command ? await sendSpringCommand(command, token, operationId) : undefined
     completed = !!command
-    return { state: await loadSpringMarketplace(token), orderIds }
+    return { ...(await loadSpringMarketplace(token)), orderIds }
   } catch (error) {
     if (!(error instanceof ApiError)) throw error
     if (error.status === 401 && storageKey === key() && getDemoSession()?.token === token) {
@@ -371,11 +387,8 @@ function sendSpringRefundAction(command: DemoCommand, orderId: string, token?: s
 export async function syncDemoState(): Promise<DemoState> {
   const storageKey = key()
   const role = activeRole
-  return merge(
-    (await request('GET', undefined, undefined, storageKey, role)).state,
-    storageKey,
-    role,
-  )
+  const { state, addressBook } = await request('GET', undefined, undefined, storageKey, role)
+  return merge(state, storageKey, role, addressBook)
 }
 const inFlight = new Map<string, Promise<DemoState>>()
 function mutate(
@@ -404,7 +417,7 @@ async function execute(
   save(data, storageKey, role)
   try {
     const response = await request('POST', command, id, storageKey, role)
-    merge(response.state, storageKey, role)
+    merge(response.state, storageKey, role, response.addressBook)
     const latest = load(storageKey)
     afterSuccess?.(latest, response.orderIds)
     delete latest.pending[fingerprint]
@@ -427,8 +440,19 @@ export function toggleFavorite(id: string): DemoState {
     : [...data.favorites, id]
   return save(data)
 }
-export function editDemoRecipient(recipient: DemoRecipient, addressId?: string | null): DemoState {
+export async function editDemoRecipient(
+  recipient: DemoRecipient,
+  addressId?: string | null,
+): Promise<DemoState> {
   const data = load()
+  if (springMarketplaceEnabled) {
+    await saveDemoAddress(
+      recipient,
+      (addressId === undefined ? data.defaultAddressId : addressId) || undefined,
+      addressId !== null,
+    )
+    return getDemoState()
+  }
   const fields = validateRecipient(recipient)
   const targetId = addressId === undefined ? data.defaultAddressId : addressId
   const existing = data.addresses.find((address) => address.id === targetId)
@@ -462,13 +486,120 @@ function syncDraftAddress(data: LocalData) {
     }
   else draft.addressId = undefined
 }
-export function saveDemoAddress(
+
+function applyAddressBook(data: LocalData, book: SpringAddressBook) {
+  if (data.addressBookRevision !== undefined && book.revision <= data.addressBookRevision) return
+  data.addressBookRevision = book.revision
+  data.addresses = book.addresses
+  data.defaultAddressId = book.defaultAddressId || undefined
+  const preferred = data.addresses.find(({ id }) => id === data.defaultAddressId) || DEMO_RECIPIENT
+  data.recipient = validateRecipient(preferred)
+  syncDraftAddress(data)
+}
+
+const addressMigrations = new Map<string, Promise<void>>()
+function migrateLocalAddresses(storageKey: string, token: string): Promise<void> | undefined {
+  const previous = addressMigrations.get(storageKey)
+  if (previous) return previous
+  const local = load(storageKey)
+  if (local.addressBookRevision !== undefined || !local.addresses.length) return
+  const migrate = (async () => {
+    const defaultAddress = local.addresses.find(({ id }) => id === local.defaultAddressId)
+    const ordered = defaultAddress
+      ? [defaultAddress, ...local.addresses.filter(({ id }) => id !== defaultAddress.id)]
+      : local.addresses
+    const legacyAddressIds: Record<string, string> = {}
+    let book: SpringAddressBook | undefined
+    // The first address becomes the default only when the server has no addresses.
+    for (const address of ordered) {
+      const result = await requestLegacyAddress(token, validateRecipient(address))
+      legacyAddressIds[address.id] = result.savedAddressId
+      book = result.book
+    }
+    const latest = load(storageKey)
+    latest.legacyAddressIds = legacyAddressIds
+    const draft = latest.checkout
+    if (draft?.addressId && !draft.orderIds.length && !pendingDraft(latest, draft)) {
+      draft.addressId = legacyAddressIds[draft.addressId] || draft.addressId
+    }
+    if (book) applyAddressBook(latest, book)
+    save(latest, storageKey, 'user')
+  })().finally(() => addressMigrations.delete(storageKey))
+  addressMigrations.set(storageKey, migrate)
+  return migrate
+}
+
+async function withSpringAddressSession<T>(
+  work: (storageKey: string, token: string) => Promise<T>,
+): Promise<T> {
+  const session = getDemoSession()
+  if (session?.role !== 'user') {
+    openLogin('user', '/pages/address/index')
+    throw new Error('请先登录用户账号')
+  }
+  const keyAtStart = key()
+  try {
+    await migrateLocalAddresses(keyAtStart, session.token)
+    if (key() !== keyAtStart || getDemoSession()?.token !== session.token)
+      throw new Error('登录状态已变化，请重试')
+    return await work(keyAtStart, session.token)
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.status === 401 && getDemoSession()?.token === session.token) {
+      clearDemoSession()
+      openLogin('user', '/pages/address/index')
+    }
+    throw cause
+  }
+}
+
+async function saveSpringAddress(fields: DemoRecipient, id: string | undefined, makeDefault: boolean) {
+  return withSpringAddressSession(async (storageKey, token) => {
+    const data = load(storageKey)
+    const target = id ? data.legacyAddressIds?.[id] || id : undefined
+    const fingerprint = JSON.stringify({ type: 'createAddress', fields, makeDefault })
+    const operationId = target ? undefined : data.pending[fingerprint] || localId('address')
+    if (operationId) {
+      data.pending[fingerprint] = operationId
+      save(data, storageKey, 'user')
+    }
+    try {
+      const { book, savedAddressId } = await requestAddressSave(token, fields, makeDefault, target, operationId)
+      const latest = load(storageKey)
+      applyAddressBook(latest, book)
+      delete latest.pending[fingerprint]
+      save(latest, storageKey, 'user')
+      const address = latest.addresses.find(({ id }) => id === savedAddressId)
+      if (!address) throw new Error('该地址已删除，请重新选择')
+      return address
+    } catch (cause) {
+      if (operationId && cause instanceof ApiError && cause.status >= 400 && cause.status < 500) {
+        const latest = load(storageKey)
+        delete latest.pending[fingerprint]
+        save(latest, storageKey, 'user')
+      }
+      throw cause
+    }
+  })
+}
+
+function changeSpringAddress(id: string, action: 'default' | 'delete') {
+  return withSpringAddressSession(async (storageKey, token) => {
+    const target = load(storageKey).legacyAddressIds?.[id] || id
+    const book = await requestAddressAction(token, target, action)
+    const latest = load(storageKey)
+    applyAddressBook(latest, book)
+    return save(latest, storageKey, 'user')
+  })
+}
+
+export async function saveDemoAddress(
   recipient: DemoRecipient,
   id?: string,
   makeDefault = false,
-): DemoAddress {
-  const data = load()
+): Promise<DemoAddress> {
   const fields = validateRecipient(recipient)
+  if (springMarketplaceEnabled) return saveSpringAddress(fields, id, makeDefault)
+  const data = load()
   let address = id ? data.addresses.find((address) => address.id === id) : undefined
   if (id && !address) throw new Error('地址不存在，请重新选择')
   if (address) Object.assign(address, fields)
@@ -486,7 +617,8 @@ export function saveDemoAddress(
   save(data)
   return { ...address }
 }
-export function setDefaultDemoAddress(id: string): DemoState {
+export async function setDefaultDemoAddress(id: string): Promise<DemoState> {
+  if (springMarketplaceEnabled) return changeSpringAddress(id, 'default')
   const data = load()
   const address = data.addresses.find((address) => address.id === id)
   if (!address) throw new Error('地址不存在，请重新选择')
@@ -494,7 +626,8 @@ export function setDefaultDemoAddress(id: string): DemoState {
   data.recipient = { name: address.name, phone: address.phone, address: address.address }
   return save(data)
 }
-export function removeDemoAddress(id: string): DemoState {
+export async function removeDemoAddress(id: string): Promise<DemoState> {
+  if (springMarketplaceEnabled) return changeSpringAddress(id, 'delete')
   const data = load()
   data.addresses = data.addresses.filter((address) => address.id !== id)
   if (data.defaultAddressId === id) data.defaultAddressId = data.addresses[0]?.id
@@ -574,7 +707,8 @@ export function selectCheckoutAddress(draftId: string, addressId: string) {
   if (!draft || draft.id !== draftId) throw new Error('待确认订单已失效，请重新选择商品')
   if (pendingDraft(data, draft) || draft.orderIds.length)
     throw new Error('支付结果待确认或订单已提交，无法更改收货信息')
-  const address = data.addresses.find((address) => address.id === addressId)
+  const target = data.legacyAddressIds?.[addressId] || addressId
+  const address = data.addresses.find((address) => address.id === target)
   if (!address) throw new Error('地址不存在，请重新选择')
   draft.addressId = address.id
   draft.command.recipient = { name: address.name, phone: address.phone, address: address.address }

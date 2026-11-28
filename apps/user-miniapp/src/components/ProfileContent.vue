@@ -23,6 +23,8 @@ const busy = ref('')
 const addressSheet = ref(false)
 const recipient = ref({ ...props.state.recipient })
 const editingAddressId = ref<string | null>(null)
+const savingAddress = ref(false)
+const addressError = ref('')
 async function logout() {
   try {
     await logoutDemo()
@@ -34,22 +36,28 @@ async function logout() {
   }
 }
 function openAddress() {
+  addressError.value = ''
   editingAddressId.value = props.state.defaultAddressId || null
   recipient.value = props.state.addresses.length
     ? { ...props.state.recipient }
     : { name: '', phone: '', address: '' }
   addressSheet.value = true
 }
-function saveAddress(value: DemoRecipient) {
+function closeAddress() {
+  if (!savingAddress.value) addressSheet.value = false
+}
+async function saveAddress(value: DemoRecipient) {
+  if (savingAddress.value) return
+  savingAddress.value = true
+  addressError.value = ''
   try {
-    editDemoRecipient(value, editingAddressId.value)
+    await editDemoRecipient(value, editingAddressId.value)
     emit('refresh')
     addressSheet.value = false
   } catch (cause) {
-    uni.showToast({
-      title: cause instanceof Error ? cause.message : '地址保存失败，请重试',
-      icon: 'none',
-    })
+    addressError.value = cause instanceof Error ? cause.message : '地址保存失败，请重试'
+  } finally {
+    savingAddress.value = false
   }
 }
 function manageAddresses() {
@@ -241,9 +249,11 @@ function allReviewed(order: DemoOrder) {
       </button>
     </view>
     <text class="profile-footnote">这是一座正在生长的小岛。感谢你来做客。</text>
-    <Sheet :visible="addressSheet" title="演示收货地址" @close="addressSheet = false">
+    <Sheet :visible="addressSheet" title="演示收货地址" @close="closeAddress">
       <AddressEditor
         :value="recipient"
+        :busy="savingAddress"
+        :save-error="addressError"
         :show-default="false"
         label="保存演示地址"
         @save="saveAddress"

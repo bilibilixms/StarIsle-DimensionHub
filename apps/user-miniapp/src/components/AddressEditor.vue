@@ -7,6 +7,8 @@ const props = withDefaults(
     makeDefault?: boolean
     showDefault?: boolean
     label?: string
+    busy?: boolean
+    saveError?: string
   }>(),
   { makeDefault: false, showDefault: true, label: '保存地址' },
 )
@@ -27,6 +29,7 @@ function blur(field: keyof DemoRecipient, event: unknown) {
   if (typeof value === 'string') form.value[field] = value
 }
 function save() {
+  if (props.busy) return
   try {
     const recipient = validateRecipient(form.value)
     error.value = ''
@@ -45,6 +48,7 @@ function save() {
       @blur="blur('name', $event)"
       class="form-input"
       aria-label="收货人"
+      :disabled="busy"
       data-testid="recipient-name"
       maxlength="30"
       placeholder="请输入收货人"
@@ -55,6 +59,7 @@ function save() {
       @blur="blur('phone', $event)"
       class="form-input"
       aria-label="手机号"
+      :disabled="busy"
       data-testid="recipient-phone"
       maxlength="11"
       type="number"
@@ -66,6 +71,7 @@ function save() {
       @blur="blur('address', $event)"
       class="form-input"
       aria-label="收货地址"
+      :disabled="busy"
       data-testid="recipient-address"
       maxlength="200"
       placeholder="请输入完整收货地址"
@@ -73,6 +79,7 @@ function save() {
     <button
       v-if="showDefault"
       class="default-toggle"
+      :disabled="busy"
       :aria-pressed="defaultAddress"
       data-testid="address-default-toggle"
       @click="defaultAddress = !defaultAddress"
@@ -82,8 +89,10 @@ function save() {
       </text>
       设为默认地址
     </button>
-    <text v-if="error" class="form-error" data-testid="address-error">{{ error }}</text>
-    <button class="primary-button" data-testid="save-recipient" @click="save">{{ label }}</button>
+    <text v-if="error || saveError" class="form-error" data-testid="address-error">{{ error || saveError }}</text>
+    <button class="primary-button" data-testid="save-recipient" :disabled="busy" :loading="busy" @click="save">
+      {{ label }}
+    </button>
   </view>
 </template>
 <style scoped>

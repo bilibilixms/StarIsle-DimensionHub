@@ -12,7 +12,7 @@ export function springMediaUrl(path: string): string {
 
 export function springRequest<T>(
   path: string,
-  method: 'GET' | 'POST' | 'PUT',
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   token?: string,
   data?: Record<string, unknown>,
   operationId?: string,
