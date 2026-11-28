@@ -237,13 +237,21 @@ async function resubmitReview() {
   }
 }
 function openShop() {
+  if (busy.value) return
   shopName.value = state.value.shop.name
   shopDescription.value = state.value.shop.description
   error.value = ''
   sheet.value = 'shop'
 }
+function syncShopField(field: 'name' | 'description', event: unknown) {
+  const value = (event as { detail?: { value?: unknown } })?.detail?.value
+  if (typeof value !== 'string') return
+  if (field === 'name') shopName.value = value
+  else shopDescription.value = value
+}
 async function saveShop() {
   if (busy.value) return
+  error.value = ''
   busy.value = true
   try {
     state.value = await editDemoShop(shopName.value, shopDescription.value)
@@ -337,7 +345,7 @@ async function toggleProduct(id: string) {
                 <Icon name="shield" tone="orange" :size="11" />
               </view>
             </view>
-            <button v-if="!springMarketplaceEnabled" class="manage-shop" data-testid="manage-shop" @click="openShop">
+            <button class="manage-shop" aria-label="编辑店铺资料" data-testid="manage-shop" @click="openShop">
               <Icon name="settings" tone="orange" :size="15" />
             </button>
           </view>
@@ -436,7 +444,7 @@ async function toggleProduct(id: string) {
             </text>
             <Icon name="chevron-right" :size="13" />
           </button>
-          <button v-if="!springMarketplaceEnabled" class="todo-row" @click="openShop">
+          <button class="todo-row" @click="openShop">
             <view class="todo-icon orange"><Icon name="settings" tone="orange" :size="18" /></view>
             <text>完善店铺资料</text>
             <text class="todo-tag">让同好更了解你</text>
@@ -588,7 +596,7 @@ async function toggleProduct(id: string) {
         <text class="profile-shop-name">{{ state.shop.name }}</text>
         <text class="profile-shop-description">{{ state.shop.description }}</text>
         <view class="profile-menu">
-          <button v-if="!springMarketplaceEnabled" @click="openShop">
+          <button @click="openShop">
             <Icon name="bag" tone="orange" />
             <text>店铺资料</text>
             <Icon name="chevron-right" :size="16" />
@@ -814,24 +822,28 @@ async function toggleProduct(id: string) {
         @saved="productSaved"
       />
     </Sheet>
-    <Sheet :visible="sheet === 'shop'" title="打理你的小店" @close="sheet = ''">
+    <Sheet :visible="sheet === 'shop'" title="打理你的小店" @close="!busy && (sheet = '')">
       <text class="form-label">店铺名称</text>
       <input
         v-model="shopName"
+        @blur="syncShopField('name', $event)"
         class="form-input"
         maxlength="20"
+        :disabled="busy"
         aria-label="店铺名称"
         data-testid="edit-shop-name"
       />
       <text class="form-label">一句话介绍</text>
       <input
         v-model="shopDescription"
+        @blur="syncShopField('description', $event)"
         class="form-input"
         maxlength="50"
+        :disabled="busy"
         aria-label="店铺介绍"
         data-testid="edit-shop-description"
       />
-      <text v-if="error" class="form-error">{{ error }}</text>
+      <text v-if="error" class="form-error" role="alert" data-testid="shop-profile-error">{{ error }}</text>
       <text class="form-note">把小店的独特之处，介绍给每一位同好。</text>
       <button
         class="primary-button merchant-primary"

@@ -5,6 +5,7 @@ import {
   variantName,
   variantStock,
   validateRecipient,
+  validateShopProfile,
   validateDemoStock,
   DEMO_ASSETS,
   productShopId,
@@ -282,6 +283,12 @@ async function requestSpring(
 async function sendSpringCommand(command: DemoCommand, token?: string, operationId?: string) {
   const id = encodeURIComponent(String(command.id))
   switch (command.type) {
+    case 'editShop':
+      await springRequest('/merchant/shop', 'PUT', token, {
+        name: command.name,
+        description: command.description,
+      })
+      return
     case 'createProduct':
     case 'editProduct': {
       const images = command.images as string[] | undefined
@@ -999,8 +1006,8 @@ export function createDemoProduct(
 export function saveDemoProduct(fields: Record<string, unknown>, id?: string): Promise<DemoState> {
   return mutate({ ...fields, type: id ? 'editProduct' : 'createProduct', ...(id ? { id } : {}) })
 }
-export function editDemoShop(name: string, description: string): Promise<DemoState> {
-  return mutate({ type: 'editShop', name, description })
+export async function editDemoShop(name: string, description: string): Promise<DemoState> {
+  return mutate({ type: 'editShop', ...validateShopProfile(name, description) })
 }
 export function submitShopReview(): Promise<DemoState> {
   return mutate({ type: 'submitShopReview' })

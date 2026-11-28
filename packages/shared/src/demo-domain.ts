@@ -259,6 +259,12 @@ export function validateRecipient(value: unknown): DemoRecipient {
     address: text(recipient.address, '收货地址', 200),
   }
 }
+export function validateShopProfile(name: unknown, description: unknown) {
+  return {
+    name: text(name, '店铺名称（最多 20 字）', 20),
+    description: text(description, '店铺介绍（最多 50 字）', 50),
+  }
+}
 export function money(cents: number): string {
   return (cents / 100).toFixed(2).replace(/\.00$/, '')
 }
@@ -784,10 +790,7 @@ export function applyDemoCommand(
     product.published = !product.published
     product.managementVersion = (product.managementVersion || 0) + 1
   } else if (command.type === 'editShop') {
-    const fields = {
-      name: text(command.name, '店铺名称（最多 20 字）', 20),
-      description: text(command.description, '店铺介绍（最多 50 字）', 50),
-    }
+    const fields = validateShopProfile(command.name, command.description)
     state.shops = marketplaceShops(state).map((shop) =>
       shop.id === shopId
         ? { ...shop, ...fields, managementVersion: (shop.managementVersion || 0) + 1 }

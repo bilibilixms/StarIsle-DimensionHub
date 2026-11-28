@@ -66,6 +66,7 @@ flowchart LR
 | `POST /api/v1/merchant/product-images`、`GET /api/v1/images/{id}.jpg` | 商家通过 multipart 字段 `file` 上传图片，再按返回的地址读取。商品可绑定本店上传的图片。 |
 | `GET /api/v1/merchant/products/{id}`、`PATCH /api/v1/merchant/products/{id}/publication` | 查看自家商品，或提交 `published` 切换上下架。店铺营业后方可上架。 |
 | `GET /api/v1/admin/shops/pending`、`POST /api/v1/admin/shops/{id}/approve` | 管理员查询待审核店铺并开通营业状态。 |
+| `PUT /api/v1/merchant/shop` | 商家更新本人店铺的名称和介绍。公开页面使用最新资料，订单使用成交时的店名。 |
 | `GET /api/v1/marketplace` | 同步商品、店铺、订单和评价。公开评价使用脱敏昵称，只有买家本人可以取得评价关联的订单和明细编号。 |
 | `POST /api/v1/orders/checkout` | 模拟支付并按店铺建单。使用 `X-Idempotency-Key` 重试时复用原订单，同一键绑定同一份请求。 |
 | `GET/POST /api/v1/orders/addresses`、`PUT/DELETE /api/v1/orders/addresses/{id}`、`PUT /api/v1/orders/addresses/{id}/default` | 买家管理本人的地址簿及默认地址。新增地址使用 `X-Idempotency-Key` 重试。已生成订单保留收货快照。 |

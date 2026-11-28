@@ -239,6 +239,61 @@ class ApplicationIntegrationTest {
     }
 
     @Test
+    void shopOwnerCanEditPublicProfileWithoutChangingExistingOrdersOrApproval() throws Exception {
+        var merchant = register("13800000009", "merchant");
+        var other = register("13800000008", "merchant");
+        String owner = merchant.path("token").asString();
+        String otherOwner = other.path("token").asString();
+        String shopId = merchant.path("shopId").asString();
+        String buyer = register("13800000001", "user").path("token").asString();
+        String path = "/api/v1/merchant/shop";
+        String draft = """
+                {"name":"原名手办店","description":"主售二次元手办"}
+                """;
+        assertThat(send("PUT", path, draft, null).statusCode()).isEqualTo(401);
+        assertThat(send("PUT", path, draft, buyer).statusCode()).isEqualTo(403);
+        assertThat(send("PUT", path, draft.replace("原名手办店", "  "), owner).statusCode()).isEqualTo(400);
+        assertThat(send("PUT", path, draft.replace("主售二次元手办", "长".repeat(51)), owner).statusCode()).isEqualTo(400);
+        var pending = send("PUT", path, draft, owner);
+        assertThat(pending.statusCode()).as(pending.body()).isEqualTo(200);
+        var pendingShop = json.readTree(pending.body()).path("data");
+        assertThat(pendingShop.path("id").asString()).isEqualTo(shopId);
+        assertThat(pendingShop.path("status").asString()).isEqualTo("PENDING");
+        assertThat(snapshot(null).path("shops").toString()).doesNotContain("原名手办店");
+        assertThat(send("PUT", path, draft.replace("原名手办店", "另一家收藏馆"), otherOwner).statusCode())
+                .isEqualTo(200);
+        assertThat(snapshot(owner).path("shops").get(0).path("name").asString()).isEqualTo("原名手办店");
+
+        String admin = json.readTree(send("POST", "/api/v1/auth/login",
+                accountForm(ADMIN_PHONE, ADMIN_PASSWORD, "admin"), null).body()).path("data").path("token").asString();
+        var product = publish(merchant, admin, "改名测试徽章");
+        String checkoutBody = checkoutForm(line(product, 1));
+        var before = checkout(checkoutBody, buyer, "before-shop-edit");
+        assertThat(before.statusCode()).as(before.body()).isEqualTo(200);
+        String rename = """
+                {"name":" 新名手办店 ","description":" 新到一批手办 "}
+                """;
+        var renamed = send("PUT", path, rename, owner);
+        assertThat(renamed.statusCode()).as(renamed.body()).isEqualTo(200);
+        var shop = json.readTree(renamed.body()).path("data");
+        assertThat(shop.path("id").asString()).isEqualTo(shopId);
+        assertThat(shop.path("status").asString()).isEqualTo("ACTIVE");
+        assertThat(shop.path("name").asString()).isEqualTo("新名手办店");
+        assertThat(shop.path("description").asString()).isEqualTo("新到一批手办");
+        assertThat(snapshot(null).path("shops").toString()).contains("新名手办店").doesNotContain("原名手办店");
+        assertThat(snapshot(otherOwner).path("shops").get(0).path("name").asString()).isEqualTo("另一家收藏馆");
+        var detail = get("/api/v1/products/" + product.path("id").asString());
+        assertThat(json.readTree(detail.body()).path("data").path("shopName").asString()).isEqualTo("新名手办店");
+
+        var after = checkout(checkoutBody, buyer, "after-shop-edit");
+        assertThat(after.statusCode()).as(after.body()).isEqualTo(200);
+        var orders = snapshot(buyer).path("orders");
+        assertThat(orders.get(0).path("shopName").asString()).isEqualTo("新名手办店");
+        assertThat(orders.get(1).path("shopName").asString()).isEqualTo("原名手办店");
+        assertThat(checkout(checkoutBody, buyer, "before-shop-edit").body()).isEqualTo(before.body());
+    }
+
+    @Test
     void checkoutAtomicallySplitsByShopAndRetriesWithoutDuplicatingOrdersOrStock() throws Exception {
         var firstMerchant = register("13800000009", "merchant");
         var secondMerchant = register("13800000008", "merchant");

@@ -38,6 +38,16 @@ public class ShopService {
                 .param("owner", ownerId).query(this::mapProfile).optional();
     }
 
+    @Transactional
+    public ShopProfile updateProfile(long ownerId, String name, String description) {
+        var shop = lockOwnedShop(ownerId);
+        String displayName = name.strip();
+        String introduction = description.strip();
+        jdbc.sql("UPDATE merchant_shop SET name = :name, description = :description WHERE id = :id")
+                .param("id", shop.id()).param("name", displayName).param("description", introduction).update();
+        return new ShopProfile(Long.toString(shop.id()), displayName, introduction, shop.status());
+    }
+
     public Optional<ShopProfile> lockProfile(long shopId) {
         return jdbc.sql("SELECT id, name, description, status FROM merchant_shop WHERE id = :id FOR UPDATE")
                 .param("id", shopId).query(this::mapProfile).optional();
