@@ -200,6 +200,7 @@ test('a new customer adds and selects addresses before paying without altering t
     await expect(page.getByTestId('order-detail-address')).toHaveText('上海市 第二条地址 2 号')
     const orderUrl = page.url()
     await viewPaidOrders(page)
+    await page.getByTestId('buyer-orders-back').click()
     await page.getByTestId('manage-addresses').click()
     await expect(page.getByTestId('default-address').locator('..')).toContainText('第一位收货人')
     const second = page.locator('.address-card').filter({ hasText: '第二位收货人' })

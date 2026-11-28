@@ -3,23 +3,17 @@ import { ref } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
 import Sheet from '@starisle/ui/Sheet.vue'
 import AddressEditor from './AddressEditor.vue'
-import OrderItems from './OrderItems.vue'
 import { getDemoSession, logoutDemo, openLogin } from '@starisle/shared/auth'
 import {
   DEMO_ASSETS,
   money,
-  orderItems,
-  reviewItemKey,
-  receiveDemoOrder,
   editDemoRecipient,
   type DemoState,
-  type DemoOrder,
   type DemoRecipient,
 } from '@starisle/shared/demo'
 const props = defineProps<{ state: DemoState }>()
-const emit = defineEmits<{ refresh: []; browse: [] }>()
-const section = ref<'orders' | 'favorites'>('orders')
-const busy = ref('')
+const emit = defineEmits<{ refresh: [] }>()
+const showFavorites = ref(false)
 const addressSheet = ref(false)
 const recipient = ref({ ...props.state.recipient })
 const editingAddressId = ref<string | null>(null)
@@ -64,44 +58,11 @@ function manageAddresses() {
   uni.navigateTo({ url: '/pages/address/index' })
 }
 
-function receive(order: DemoOrder) {
-  if (busy.value) return
-  uni.showModal({
-    title: '确认收到好物',
-    content: '确认后，此演示订单将完成，商家端也会同步更新。',
-    confirmText: '确认收货',
-    async success(result) {
-      if (!result.confirm || busy.value) return
-      busy.value = order.id
-      try {
-        await receiveDemoOrder(order.id)
-        emit('refresh')
-        uni.showToast({ title: '已确认收货', icon: 'success' })
-      } catch (error) {
-        uni.showToast({ title: error instanceof Error ? error.message : '操作失败', icon: 'none' })
-      } finally {
-        busy.value = ''
-      }
-    },
-  })
+function openOrderList() {
+  uni.navigateTo({ url: '/pages/order/index' })
 }
 function openProduct(id: string) {
   uni.navigateTo({ url: `/pages/product/detail?id=${id}` })
-}
-function openOrder(id: string, action?: 'review' | 'aftersale') {
-  uni.navigateTo({
-    url: `/pages/order/detail?id=${encodeURIComponent(id)}${action ? '&action=' + action : ''}`,
-  })
-}
-function hasReviews(order: DemoOrder) {
-  return props.state.reviews.some((review) => review.orderId === order.id)
-}
-function allReviewed(order: DemoOrder) {
-  return orderItems(order).every((item) =>
-    props.state.reviews.some(
-      (review) => review.orderId === order.id && review.itemKey === reviewItemKey(item),
-    ),
-  )
 }
 </script>
 
@@ -131,96 +92,24 @@ function allReviewed(order: DemoOrder) {
       管理收货地址（{{ state.addresses.length }}）
     </button>
     <view class="profile-shortcuts">
-      <button :class="{ active: section === 'orders' }" @click="section = 'orders'">
+      <button data-testid="open-order-list" @click="openOrderList">
         <text>{{ state.orders.length }}</text>
         <text>我的订单</text>
       </button>
       <button
-        :class="{ active: section === 'favorites' }"
-        @click="section = 'favorites'"
+        :class="{ active: showFavorites }"
+        :aria-expanded="showFavorites"
+        @click="showFavorites = !showFavorites"
         data-testid="show-favorites"
       >
         <text data-testid="favorite-count">{{ state.favorites.length }}</text>
         <text>我的收藏</text>
       </button>
     </view>
-    <view class="section-heading">
-      <view class="section-heading-title">
-        <text>{{ section === 'orders' ? '我的订单' : '心动收藏' }}</text>
+    <template v-if="showFavorites">
+      <view class="section-heading">
+        <view class="section-heading-title"><text>心动收藏</text></view>
       </view>
-      <text v-if="section === 'orders'" class="profile-list-note">与商家端同步</text>
-    </view>
-    <template v-if="section === 'orders'">
-      <view
-        v-for="order in state.orders"
-        :key="order.id"
-        class="order-card"
-        :data-testid="`user-order-${order.id}`"
-        role="button"
-        tabindex="0"
-        :aria-label="`查看${order.status}订单：${order.title}`"
-        @click="openOrder(order.id)"
-        @keydown.enter.self="openOrder(order.id)"
-      >
-        <view class="order-heading">
-          <text>{{ order.shopName || state.shop.name }}</text>
-          <text class="order-status">{{ order.status }}</text>
-        </view>
-        <OrderItems :order="order" compact />
-        <text class="order-amount">实付 ¥{{ money(order.amount) }}</text>
-        <text class="order-number">演示订单 {{ order.id }}</text>
-        <view v-if="order.carrier && order.tracking" class="order-logistics">
-          <text>{{ order.carrier }} · {{ order.tracking }}</text>
-          <text>{{ order.shippedAt }} 模拟发货</text>
-        </view>
-        <text v-if="order.completedAt" class="order-number">
-          {{ order.completedAt }} 已确认收货
-        </text>
-        <view class="order-card-actions" @click.stop>
-          <button
-            v-if="['待发货', '待收货', '已完成', '退款中', '已退款'].includes(order.status)"
-            class="secondary-button order-card-action"
-            :data-testid="`aftersale-${order.id}`"
-            @click.stop="openOrder(order.id, 'aftersale')"
-          >
-            {{
-              order.status === '退款中'
-                ? '售后进度'
-                : order.status === '已退款'
-                  ? '退款详情'
-                  : '申请售后'
-            }}
-          </button>
-          <button
-            v-if="order.status === '已完成' || hasReviews(order)"
-            class="secondary-button order-card-action review-action"
-            :data-testid="`review-order-${order.id}`"
-            @click.stop="openOrder(order.id, 'review')"
-          >
-            {{
-              allReviewed(order) ? '查看评价' : order.status === '已完成' ? '去评价' : '查看评价'
-            }}
-          </button>
-          <button
-            v-if="order.status === '待收货'"
-            class="secondary-button order-card-action review-action"
-            :disabled="!!busy"
-            :loading="busy === order.id"
-            :data-testid="`receive-${order.id}`"
-            @click.stop="receive(order)"
-          >
-            确认收货
-          </button>
-        </view>
-      </view>
-      <view v-if="!state.orders.length" class="empty-state">
-        <Icon name="receipt" tone="purple" :size="40" />
-        <text class="empty-title">还没有开启你的收藏之旅</text>
-        <text class="empty-copy">第一件心动好物，正在等你。</text>
-        <button class="secondary-button" @click="$emit('browse')">去发现好物</button>
-      </view>
-    </template>
-    <template v-else>
       <view
         v-for="product in state.products.filter((product) => state.favorites.includes(product.id))"
         :key="product.id"
@@ -268,35 +157,6 @@ function allReviewed(order: DemoOrder) {
   width: 100%;
   font-size: 11px;
 }
-.order-logistics {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  margin-top: 12px;
-  color: #a08aaf;
-  font-size: 10px;
-  line-height: 1.7;
-}
-.order-card-actions {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 9px;
-  margin-top: 16px;
-}
-.order-card-actions .order-card-action {
-  width: auto;
-  min-height: 34px;
-  margin: 0;
-  padding: 7px 13px;
-  border-radius: 18px;
-  font-size: 12px;
-}
-.order-card-actions .review-action {
-  color: #7a51b9;
-  border-color: #b99bdb;
-  background: #faf7ff;
-}
 .profile-content {
   padding: 14px 20px;
 }
@@ -338,7 +198,7 @@ function allReviewed(order: DemoOrder) {
 }
 .profile-shortcuts {
   display: flex;
-  padding: 25px 0;
+  margin-top: 25px;
   gap: 15px;
 }
 .profile-shortcuts button {
@@ -365,60 +225,8 @@ function allReviewed(order: DemoOrder) {
   margin-top: 5px;
   display: block;
 }
-.profile-list-note {
-  font-size: 10px;
-  color: #ada0b9;
-}
-.order-card {
-  background: white;
-  border-radius: 14px;
-  padding: 16px;
-  margin-bottom: 13px;
-}
-.order-heading {
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  padding-bottom: 14px;
-}
-.order-status {
-  color: #aa80d5;
-}
-.order-product {
-  display: flex;
-  gap: 13px;
-}
-.order-product image {
-  width: 75px;
-  height: 85px;
-  border-radius: 10px;
-}
-.order-product > view {
-  flex: 1;
-}
-.order-title {
-  display: block;
-  font-size: 12px;
-  line-height: 1.7;
-}
-.order-variant {
-  display: block;
-  color: #b2a4bd;
-  font-size: 10px;
-  margin-top: 8px;
-}
-.order-amount {
-  display: block;
-  text-align: right;
-  font-size: 13px;
-  font-weight: 650;
-  margin-top: 16px;
-}
-.order-number {
-  display: block;
-  font-size: 9px;
-  color: #b5a9c1;
-  margin-top: 13px;
+.section-heading {
+  margin-top: 25px;
 }
 .favorite-card {
   display: flex;

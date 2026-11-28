@@ -17,7 +17,7 @@ export async function viewPaidOrders(page: Page) {
   if (await page.getByTestId('order-detail-status').count())
     await page.getByTestId('order-detail-list').click()
   else await page.getByTestId('checkout-result-orders').click()
-  await expect(page.getByTestId('nav-profile')).toBeVisible()
+  await expect(page.getByTestId('buyer-orders-page')).toBeVisible()
 }
 export async function pay(page: Page, success = true) {
   await ensureCheckoutAddress(page)

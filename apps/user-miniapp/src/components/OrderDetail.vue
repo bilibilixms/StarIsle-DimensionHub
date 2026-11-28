@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
 import OrderItems from './OrderItems.vue'
 import OrderReviews from './OrderReviews.vue'
@@ -26,6 +26,15 @@ const returnCarrier = ref('顺丰速运')
 const returnTracking = ref('')
 const statusHeight = uni.getSystemInfoSync().statusBarHeight || 0
 const order = computed(() => state.value.orders.find((order) => order.id === id.value))
+watch(
+  () => (props.action === 'logistics' ? order.value?.id : undefined),
+  async (orderId) => {
+    if (!orderId) return
+    await nextTick()
+    uni.pageScrollTo({ selector: '#order-logistics-section', duration: 200 })
+  },
+  { immediate: true },
+)
 const statusCopy = computed(() => {
   if (order.value?.status === '退款中')
     return REFUND_STATUS_LABELS[order.value.refund?.status || 'PENDING']
@@ -63,7 +72,9 @@ const progress = computed(() => {
 })
 
 function orders() {
-  uni.reLaunch({ url: '/pages/index/index?tab=profile' })
+  const pages = getCurrentPages()
+  if (pages[pages.length - 2]?.route === 'pages/order/index') uni.navigateBack()
+  else uni.reLaunch({ url: '/pages/order/index' })
 }
 function back() {
   if (getCurrentPages().length > 1) uni.navigateBack()
@@ -143,7 +154,10 @@ function receive() {
 <template>
   <view
     class="app-screen order-screen"
-    :class="{ 'shortcut-screen': !!action, 'focus-aftersale': action === 'aftersale' }"
+    :class="{
+      'shortcut-screen': action === 'review' || action === 'aftersale',
+      'focus-aftersale': action === 'aftersale',
+    }"
   >
     <view class="order-nav" :style="{ paddingTop: `${statusHeight}px` }">
       <view class="nav-content">
@@ -201,7 +215,7 @@ function receive() {
             {{ order.recipient.address }}
           </text>
         </view>
-        <view class="receipt-section">
+        <view id="order-logistics-section" class="receipt-section">
           <text class="section-title">物流信息</text>
           <template v-if="order.carrier && order.tracking">
             <view class="detail-row">

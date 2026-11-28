@@ -7,6 +7,7 @@ withDefaults(
     back?: boolean
     badge?: boolean
     compact?: boolean
+    background?: string
   }>(),
   { title: '星屿', subtitle: '', back: false, badge: false, compact: false },
 )
@@ -18,7 +19,7 @@ const statusHeight = uni.getSystemInfoSync().statusBarHeight || 0
   <view
     class="header"
     :class="{ 'compact-header': compact }"
-    :style="{ paddingTop: `${statusHeight}px` }"
+    :style="{ paddingTop: `${statusHeight}px`, background }"
   >
     <view class="header-content">
       <button v-if="back" class="icon-button back" aria-label="返回" @click="$emit('back')">

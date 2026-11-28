@@ -42,6 +42,84 @@ test.beforeEach(async ({ request }) => {
   await command(request, 'merchant', { type: 'reset' })
 })
 
+test('buyers can search, filter, and open logistics from the order center', async ({
+  page,
+  request,
+}) => {
+  const awaitingReview = await purchase(request)
+  await ship(request, awaitingReview.id)
+  await command(request, 'user', { type: 'receive', id: awaitingReview.id })
+  const inTransit = await purchase(request)
+  await ship(request, inTransit.id)
+  const awaitingShipment = await purchase(request)
+
+  await page.goto(profile)
+  const profileScreen = page.locator('.profile-screen')
+  await expect(profileScreen).toHaveCSS('background-color', 'rgb(255, 255, 255)')
+  await expect(profileScreen.locator('.header')).toHaveCSS('background-color', 'rgb(255, 255, 255)')
+  await expect(page.getByTestId('buyer-orders-filter-all')).toHaveCount(0)
+  await expect(page.getByTestId(`user-order-${awaitingShipment.id}`)).toHaveCount(0)
+  await page.getByTestId('open-order-list').click()
+  await expect(page).toHaveURL(/\/pages\/order\/index/)
+  const orders = page.getByTestId('buyer-orders-page')
+  await expect(orders).toHaveCSS('background-color', 'rgb(255, 255, 255)')
+  const card = (order: { id: string }) => orders.getByTestId(`user-order-${order.id}`)
+  await expect(card(awaitingShipment)).toContainText('待发货')
+  await expect(card(awaitingReview)).toContainText('去评价')
+  await expect(card(inTransit)).toContainText('SF202610310006')
+
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  }
+  await mkdir('.tools/previews', { recursive: true })
+  await page.evaluate(async () => {
+    await Promise.all(Array.from(document.images).map((image) => image.decode().catch(() => {})))
+  })
+  await page.screenshot({ path: '.tools/previews/buyer-orders.png', fullPage: true })
+
+  const filter = (name: string) => orders.getByTestId(`buyer-orders-filter-${name}`)
+  await filter('shipping').click()
+  await expect(card(awaitingShipment)).toBeVisible()
+  await expect(card(inTransit)).toHaveCount(0)
+  await filter('review').click()
+  await expect(card(awaitingReview)).toBeVisible()
+  await expect(card(awaitingShipment)).toHaveCount(0)
+  await filter('aftersale').click()
+  await expect(orders.getByTestId('buyer-orders-empty')).toContainText('暂无退款售后订单')
+  await filter('all').click()
+
+  const search = orders.getByTestId('buyer-order-search').locator('input')
+  for (const query of [inTransit.title, '星屿周边馆']) {
+    await search.fill(query)
+    await expect(card(inTransit)).toBeVisible()
+  }
+  await search.fill(inTransit.id)
+  await expect(card(awaitingShipment)).toHaveCount(0)
+  await expect(card(inTransit)).toBeVisible()
+  await orders.getByTestId('clear-order-search').click()
+  await expect(card(awaitingShipment)).toBeVisible()
+
+  await filter('receiving').click()
+  await card(inTransit).getByTestId(`logistics-${inTransit.id}`).click()
+  await expect(page).toHaveURL(/action=logistics/)
+  await expect(page.getByTestId('order-detail-tracking')).toBeInViewport()
+  await page.getByTestId('order-detail-list').click()
+  await expect(orders).toBeVisible()
+  await expect(card(inTransit)).toBeVisible()
+  await expect(card(awaitingShipment)).toHaveCount(0)
+
+  await command(request, 'user', {
+    type: 'requestRefund',
+    id: awaitingShipment.id,
+    reason: '选错款式',
+    refundType: 'REFUND_ONLY',
+  })
+  await filter('aftersale').click()
+  await expect(card(awaitingShipment)).toContainText('售后进度')
+  await expect(card(inTransit)).toHaveCount(0)
+})
+
 test('a completed order opens its receipt and retains the original transaction after catalog changes', async ({
   page,
   request,
@@ -64,10 +142,11 @@ test('a completed order opens its receipt and retains the original transaction a
     description: '新的店铺资料',
   })
   await page.goto(profile)
-  await expect(page.getByTestId(`user-order-${order.id}`)).toContainText('已完成')
   await page.getByTestId('edit-recipient').click()
   await page.getByTestId('recipient-address').locator('input').fill('上海市 后来修改的新地址')
   await page.getByTestId('save-recipient').click()
+  await page.getByTestId('open-order-list').click()
+  await expect(page.getByTestId(`user-order-${order.id}`)).toContainText('已完成')
   await page.getByTestId(`user-order-${order.id}`).getByText(order.title, { exact: true }).click()
   await expect(page).toHaveURL(new RegExp(`/pages/order/detail\\?id=${order.id}`))
   await expect(page.getByTestId('order-detail-status')).toHaveText('已完成')
@@ -98,7 +177,7 @@ test('a completed order opens its receipt and retains the original transaction a
   await expect(page.getByTestId('order-detail-status')).toHaveText('已完成')
   await expect(page.getByTestId('order-detail-amount')).toHaveText('¥316')
   await page.getByTestId('order-back').click()
-  await expect(page).toHaveURL(/#\/(?:pages\/index\/index)?\?tab=profile/)
+  await expect(page).toHaveURL(/#\/pages\/order\/index/)
   await expect(page.getByTestId(`user-order-${order.id}`)).toContainText('已完成')
 })
 
@@ -109,6 +188,7 @@ test('order details track shipment and allow receipt only while awaiting receipt
 }) => {
   const order = await purchase(request)
   await page.goto(profile)
+  await page.getByTestId('open-order-list').click()
   await page.getByTestId(`user-order-${order.id}`).click()
   await expect(page.getByTestId('order-detail-status')).toHaveText('待发货')
   await expect(page.getByTestId('order-detail-receive')).toHaveCount(0)
@@ -145,6 +225,7 @@ test('the order product opens its current purchase page and returns to the compl
     stock: '5',
   })
   await page.goto(profile)
+  await page.getByTestId('open-order-list').click()
   await page.getByTestId(`user-order-${order.id}`).click()
   await expect(page.getByTestId('order-detail-status')).toHaveText('已完成')
   await expect(page.getByTestId('order-detail-title')).toHaveText(order.title)
@@ -169,7 +250,7 @@ test('unknown and reset orders show an empty state and return to the order list'
   await expect(page.getByTestId('order-detail-missing')).toContainText('未找到这笔订单')
   await expect(page.getByTestId('buy-now')).toHaveCount(0)
   await page.getByText('返回我的订单', { exact: true }).click()
-  await expect(page).toHaveURL(/#\/(?:pages\/index\/index)?\?tab=profile/)
+  await expect(page).toHaveURL(/#\/pages\/order\/index/)
   const order = await purchase(request)
   await page.reload()
   await page.getByTestId(`user-order-${order.id}`).click()

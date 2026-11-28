@@ -205,6 +205,7 @@ test('an unpublished product has a back button returning to the same completed o
   await command(request, 'user', { type: 'receive', id: orderId })
   await command(request, 'merchant', { type: 'toggleProduct', id: 'star-fairy' })
   await page.goto(`${user}?tab=profile`)
+  await page.getByTestId('open-order-list').click()
   await page.getByTestId(`user-order-${orderId}`).click()
   await page.getByTestId('order-detail-product').click()
   await expect(page.getByText('这份好物暂时不在岛上')).toBeVisible()

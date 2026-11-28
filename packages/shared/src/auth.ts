@@ -44,7 +44,7 @@ function safeDestination(url: string, role: AuthRole): string {
   if (role === 'admin')
     return ADMIN_UI_ENABLED ? '/pages/admin/index' : '/pages/auth/index?role=user'
   if (role === 'merchant') return '/pages/merchant/index'
-  return /^\/pages\/(index\/index|product\/detail|order\/detail|shop\/detail|checkout\/index|address\/index)(\?|$)/.test(
+  return /^\/pages\/(index\/index|product\/detail|order\/(?:detail|index)|shop\/detail|checkout\/index|address\/index)(\?|$)/.test(
     url,
   )
     ? url

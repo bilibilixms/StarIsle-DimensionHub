@@ -70,7 +70,7 @@ const results = computed(() =>
     .filter((order) => !!order),
 )
 function orders() {
-  uni.reLaunch({ url: '/pages/index/index?tab=profile' })
+  uni.reLaunch({ url: '/pages/order/index' })
 }
 function back() {
   if (busy.value) return

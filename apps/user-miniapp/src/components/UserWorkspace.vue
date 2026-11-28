@@ -35,11 +35,18 @@ watch(
 </script>
 
 <template>
-  <view class="app-screen" :class="{ 'storefront-screen': tab === 'home' || tab === 'discover' }">
+  <view
+    class="app-screen"
+    :class="{
+      'storefront-screen': tab === 'home' || tab === 'discover',
+      'profile-screen': tab === 'profile',
+    }"
+  >
     <AppHeader
       :title="title"
       :subtitle="tab === 'home' || tab === 'discover' ? '次元聚集地' : ''"
       :compact="tab === 'home' || tab === 'discover'"
+      :background="tab === 'profile' ? '#fff' : undefined"
       @message="messages = true"
     />
     <SyncStatus :connected="connected" :syncing="syncing" :error="syncError" @retry="sync" />
@@ -58,12 +65,7 @@ watch(
       @completed="changeTab('profile')"
       @browse="changeTab('home')"
     />
-    <ProfileContent
-      v-else-if="getDemoSession()"
-      :state="state"
-      @refresh="refresh"
-      @browse="changeTab('home')"
-    />
+    <ProfileContent v-else-if="getDemoSession()" :state="state" @refresh="refresh" />
     <view v-else class="empty-state">
       <Icon name="user" tone="purple" :size="44" />
       <text class="empty-title">登录，拥有自己的小岛</text>
@@ -106,6 +108,9 @@ watch(
 <style scoped>
 .storefront-screen {
   background: #f7f6fa;
+}
+.profile-screen {
+  background: #fff;
 }
 .storefront-screen :deep(.sync-status:not(.disconnected)) {
   margin: 0;

@@ -124,6 +124,7 @@ test('order card shortcuts open review and after-sales sections and show updated
   })
   await command(request, 'user', { type: 'receive', id: order.id })
   await page.goto('http://127.0.0.1:4173/#/pages/index/index?tab=profile')
+  await page.getByTestId('open-order-list').click()
   const card = page.getByTestId(`user-order-${order.id}`)
   await expect(card.getByTestId(`review-order-${order.id}`)).toHaveText('去评价')
   await expect(card.getByTestId(`aftersale-${order.id}`)).toHaveText('申请售后')

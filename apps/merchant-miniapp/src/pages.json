@@ -31,6 +31,12 @@
       }
     },
     {
+      "path": "pages/order/index",
+      "style": {
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/order/detail",
       "style": {
         "navigationStyle": "custom"

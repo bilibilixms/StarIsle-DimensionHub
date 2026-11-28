@@ -8,7 +8,10 @@ const ready = ref(false)
 const action = ref('')
 onLoad((query) => {
   id.value = query?.id || ''
-  action.value = query?.action === 'review' || query?.action === 'aftersale' ? query.action : ''
+  const requested = query?.action
+  action.value = requested === 'review' || requested === 'aftersale' || requested === 'logistics'
+    ? requested
+    : ''
 })
 onShow(() => {
   const destination = `/pages/order/detail?id=${encodeURIComponent(id.value)}${action.value ? '&action=' + action.value : ''}`
