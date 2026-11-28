@@ -3,6 +3,7 @@ package cn.starisle.order.api;
 import cn.starisle.identity.api.CurrentAccount;
 import cn.starisle.order.internal.OrderService;
 import cn.starisle.shared.api.ApiResponse;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotBlank;
@@ -49,7 +50,8 @@ public class OrderController {
     }
 
     public record Checkout(@NotNull @Size(min = 1, max = 100) List<@NotNull @Valid Line> items,
-                           @NotNull @Valid Recipient recipient) {}
+                           @NotNull @Valid Recipient recipient,
+                           @JsonInclude(JsonInclude.Include.NON_NULL) @PositiveOrZero Long cartVersion) {}
 
     public record Line(@NotNull @Positive Long productId, @NotNull @Positive Long skuId,
                        @NotNull @Positive @Max(999_999) Integer quantity,

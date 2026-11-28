@@ -175,7 +175,7 @@ async function confirm() {
     await sync()
     if (!connected.value) throw new Error('暂时无法连接演示服务，请检查服务后重试')
     if (sheet.value === 'add') {
-      state.value = addToCart(id.value, variant.value, quantity.value)
+      state.value = await addToCart(id.value, variant.value, quantity.value)
       sheet.value = ''
       uni.showToast({ title: '心动已放进口袋', icon: 'success' })
     } else {

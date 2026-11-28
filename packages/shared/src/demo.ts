@@ -31,7 +31,7 @@ import {
   requestLegacyAddress,
   type SpringAddressBook,
 } from './spring-addresses'
-import { loadSpringMarketplace } from './spring-marketplace'
+import { loadSpringMarketplace, type SpringCart } from './spring-marketplace'
 export {
   DEMO_ASSETS,
   DEMO_PRODUCTS,
@@ -74,6 +74,7 @@ export interface CheckoutDraft {
 
 export interface DemoCartItem {
   productId: string
+  title?: string
   variant: DemoVariant
   quantity: number
   selected: boolean
@@ -97,6 +98,7 @@ interface LocalData {
   version: 2
   favorites: string[]
   cart: DemoCartItem[]
+  cartVersion?: number
   recipient: DemoRecipient
   marketplace?: DemoMarketplaceView
   pending: Record<string, string>
@@ -112,6 +114,7 @@ export interface DemoCheckout {
   items: DemoCheckoutLine[]
   recipient: DemoRecipient
   datasetId?: string
+  cartVersion?: number
   [key: string]: unknown
 }
 let activeRole: DemoRole = 'user'
@@ -183,6 +186,7 @@ function merge(
   storageKey = key(),
   role = activeRole,
   addressBook?: SpringAddressBook,
+  cart?: SpringCart,
 ): DemoState {
   const data = load(storageKey)
   if (
@@ -192,10 +196,14 @@ function merge(
   ) {
     data.marketplace = marketplace
     const ids = new Set(marketplace.products.map((product) => product.id))
-    data.cart = data.cart.filter((item) => ids.has(item.productId))
+    if (!springMarketplaceEnabled) data.cart = data.cart.filter((item) => ids.has(item.productId))
     data.favorites = (marketplace.favoriteIds ?? data.favorites).filter((id) => ids.has(id))
   }
   if (addressBook) applyAddressBook(data, addressBook)
+  if (cart && !hasPendingLegacyCart(data) && (data.cartVersion === undefined || cart.version > data.cartVersion)) {
+    data.cart = cart.items
+    data.cartVersion = cart.version
+  }
   return save(data, storageKey, role)
 }
 class DemoRequestError extends Error {
@@ -205,13 +213,19 @@ class DemoRequestError extends Error {
     this.definite = definite
   }
 }
+interface MarketplaceResult {
+  state: DemoMarketplaceView
+  orderIds?: string[]
+  addressBook?: SpringAddressBook
+  cart?: SpringCart
+}
 function request(
   method: 'GET' | 'POST',
   command?: DemoCommand,
   operationId?: string,
   storageKey = key(),
   role = activeRole,
-): Promise<{ state: DemoMarketplaceView; orderIds?: string[]; addressBook?: SpringAddressBook }> {
+): Promise<MarketplaceResult> {
   if (springMarketplaceEnabled) return requestSpring(command, operationId, storageKey, role)
   return new Promise((resolve, reject) => {
     uni.request({
@@ -259,7 +273,7 @@ async function requestSpring(
   operationId: string | undefined,
   storageKey: string,
   role: DemoRole,
-): Promise<{ state: DemoMarketplaceView; orderIds?: string[]; addressBook?: SpringAddressBook }> {
+): Promise<MarketplaceResult> {
   const session = getDemoSession()
   const token = session?.token
   let completed = false
@@ -267,6 +281,7 @@ async function requestSpring(
     if (role === 'user' && session?.role === 'user') {
       await migrateLocalAddresses(storageKey, session.token)
       await migrateLocalFavorites(storageKey, session.token)
+      await migrateLocalCart(storageKey, session.token)
     }
     const orderIds = command ? await sendSpringCommand(command, token, operationId) : undefined
     completed = !!command
@@ -293,6 +308,20 @@ async function sendSpringCommand(command: DemoCommand, token?: string, operation
     case 'setFavorite':
       await springRequest(`/favorites/${id}`, command.favorite ? 'PUT' : 'DELETE', token)
       return
+    case 'saveCartItem':
+    case 'removeCartItem': {
+      const path = `/cart/items/${id}/${encodeURIComponent(String(command.variant))}`
+      if (command.type === 'removeCartItem') {
+        await springRequest(`${path}?version=${command.version}`, 'DELETE', token)
+      } else {
+        await springRequest(path, 'PUT', token, {
+          quantity: command.quantity,
+          selected: command.selected,
+          version: command.version,
+        })
+      }
+      return
+    }
     case 'createProduct':
     case 'editProduct': {
       const images = command.images as string[] | undefined
@@ -325,6 +354,7 @@ async function sendSpringCommand(command: DemoCommand, token?: string, operation
       return springRequest<string[]>('/orders/checkout', 'POST', token, {
         items: checkout.items.map(({ variant, ...line }) => ({ ...line, skuId: variant })),
         recipient: checkout.recipient,
+        cartVersion: checkout.cartVersion,
       }, operationId)
     }
     case 'ship':
@@ -398,8 +428,8 @@ function sendSpringRefundAction(command: DemoCommand, orderId: string, token?: s
 export async function syncDemoState(): Promise<DemoState> {
   const storageKey = key()
   const role = activeRole
-  const { state, addressBook } = await request('GET', undefined, undefined, storageKey, role)
-  return merge(state, storageKey, role, addressBook)
+  const { state, addressBook, cart } = await request('GET', undefined, undefined, storageKey, role)
+  return merge(state, storageKey, role, addressBook, cart)
 }
 const inFlight = new Map<string, Promise<DemoState>>()
 function mutate(
@@ -428,7 +458,7 @@ async function execute(
   save(data, storageKey, role)
   try {
     const response = await request('POST', command, id, storageKey, role)
-    merge(response.state, storageKey, role, response.addressBook)
+    merge(response.state, storageKey, role, response.addressBook, response.cart)
     const latest = load(storageKey)
     afterSuccess?.(latest, response.orderIds)
     delete latest.pending[fingerprint]
@@ -444,16 +474,15 @@ async function execute(
   }
 }
 const favoriteMigrations = new Map<string, Promise<void>>()
+function springId(id: string): boolean {
+  return /^[1-9]\d{0,18}$/.test(id) && (id.length < 19 || id <= '9223372036854775807')
+}
 function migrateLocalFavorites(storageKey: string, token: string): Promise<void> | undefined {
   const previous = favoriteMigrations.get(storageKey)
   if (previous) return previous
   const data = load(storageKey)
   if (data.marketplace?.favoriteIds !== undefined) return
-  const productIds = [
-    ...new Set(data.favorites.filter(
-      (id) => /^[1-9]\d{0,18}$/.test(id) && (id.length < 19 || id <= '9223372036854775807'),
-    )),
-  ]
+  const productIds = [...new Set(data.favorites.filter(springId))]
   if (!productIds.length) return
   const migrate = (async () => {
     for (let start = 0; start < productIds.length; start += 100) {
@@ -464,6 +493,27 @@ function migrateLocalFavorites(storageKey: string, token: string): Promise<void>
   })().finally(() => favoriteMigrations.delete(storageKey))
   favoriteMigrations.set(storageKey, migrate)
   return migrate
+}
+
+const cartMigrations = new Map<string, Promise<void>>()
+function migrateLocalCart(storageKey: string, token: string): Promise<void> | undefined {
+  const previous = cartMigrations.get(storageKey)
+  if (previous) return previous
+  const data = load(storageKey)
+  if (data.cartVersion !== undefined || hasPendingLegacyCart(data)) return
+  const items = data.cart
+    .filter(({ productId, variant, quantity }) =>
+      springId(productId) && springId(variant) && Number.isInteger(quantity) && quantity >= 1 && quantity <= 999_999,
+    )
+    .map(({ productId, variant, quantity, selected }) => ({ productId, skuId: variant, quantity, selected }))
+  if (!items.length) return
+  const migration = (async () => {
+    for (let start = 0; start < items.length; start += 100) {
+      await springRequest('/cart/import', 'POST', token, { items: items.slice(start, start + 100) })
+    }
+  })().finally(() => cartMigrations.delete(storageKey))
+  cartMigrations.set(storageKey, migration)
+  return migration
 }
 
 export async function toggleFavorite(id: string): Promise<DemoState> {
@@ -507,6 +557,18 @@ function localId(prefix: string) {
 }
 function pendingDraft(data: LocalData, draft: CheckoutDraft): boolean {
   return !!data.pending[JSON.stringify(draft.command)]
+}
+function findPendingCart(data: LocalData): DemoCheckout | undefined {
+  return Object.keys(data.pending)
+    .map((fingerprint) => JSON.parse(fingerprint) as DemoCheckout)
+    .find((checkout) => checkout.type === 'checkout' && checkout.source === 'cart')
+}
+function hasPendingLegacyCart(data: LocalData): boolean {
+  const pending = data.cartVersion === undefined && findPendingCart(data)
+  return !!pending && pending.cartVersion === undefined
+}
+export function pendingCartCheckout(): DemoCheckout | undefined {
+  return springMarketplaceEnabled ? findPendingCart(load()) : undefined
 }
 function syncDraftAddress(data: LocalData) {
   const draft = data.checkout
@@ -751,6 +813,7 @@ export function selectCheckoutAddress(draftId: string, addressId: string) {
 export function checkoutProblem(draft: CheckoutDraft, state = getDemoState()): string {
   if (draft.orderIds.length || checkoutPending(draft)) return ''
   try {
+    ensureCheckoutCartCurrent(draft.command)
     validateDemoStock(state.products, draft.command.items)
     if (draft.command.datasetId !== load().marketplace?.datasetId)
       return '演示场景已重置，请更新商品信息后重新确认'
@@ -769,11 +832,17 @@ export function checkoutProblem(draft: CheckoutDraft, state = getDemoState()): s
     return cause instanceof Error ? cause.message : '请检查商品和收货信息'
   }
 }
+function ensureCheckoutCartCurrent(checkout: DemoCheckout) {
+  if (springMarketplaceEnabled && checkout.source === 'cart' && checkout.cartVersion !== load().cartVersion) {
+    throw new Error('购物车已更新，请返回购物车重新结算')
+  }
+}
 export function refreshCheckoutDraft(id: string): CheckoutDraft {
   const data = load()
   const draft = data.checkout
   if (!draft || draft.id !== id) throw new Error('待确认订单已失效，请重新选择商品')
   if (pendingDraft(data, draft) || draft.orderIds.length) throw new Error('请先确认上次支付结果')
+  ensureCheckoutCartCurrent(draft.command)
   validateDemoStock(data.marketplace?.products || [], draft.command.items)
   draft.command.items = draft.command.items.map((item) =>
     line(item.productId, item.variant, item.quantity),
@@ -792,7 +861,7 @@ export async function submitCheckout(id: string): Promise<CheckoutDraft> {
   if (problem) throw new Error(problem)
   await mutate(draft.command, (data, orderIds) => {
     if (!orderIds?.length) throw new Error('订单结果暂未确认，请重试')
-    if (draft.command.source === 'cart') {
+    if (draft.command.source === 'cart' && draft.command.cartVersion === undefined) {
       for (const bought of draft.command.items) {
         const item = data.cart.find(
           (item) => item.productId === bought.productId && item.variant === bought.variant,
@@ -808,7 +877,15 @@ export async function submitCheckout(id: string): Promise<CheckoutDraft> {
 export function resetDemoState(): Promise<DemoState> {
   return mutate({ type: 'reset' })
 }
-export function addToCart(productId: string, variant: DemoVariant, quantity: number): DemoState {
+function springCartVersion(data: LocalData): number {
+  if (data.cartVersion === undefined) {
+    if (hasPendingLegacyCart(data)) throw new Error('请先确认上次支付结果')
+    throw new Error('购物车正在同步，请稍后重试')
+  }
+  return data.cartVersion
+}
+
+export async function addToCart(productId: string, variant: DemoVariant, quantity: number): Promise<DemoState> {
   const data = load()
   const product = data.marketplace?.products.find((item) => item.id === productId && item.published)
   if (!product || !Number.isInteger(quantity) || quantity < 1)
@@ -821,6 +898,12 @@ export function addToCart(productId: string, variant: DemoVariant, quantity: num
   if (existingQuantity + quantity > variantStock(product, variant))
     throw new Error('已超过可选库存数量')
   const item = data.cart.find((item) => item.productId === productId && item.variant === variant)
+  if (springMarketplaceEnabled) {
+    return mutate({
+      type: 'saveCartItem', id: productId, variant, quantity: existingQuantity + quantity,
+      selected: item?.selected ?? true, version: springCartVersion(data),
+    })
+  }
   if (item) item.quantity += quantity
   else
     data.cart.push({
@@ -832,14 +915,21 @@ export function addToCart(productId: string, variant: DemoVariant, quantity: num
     })
   return save(data)
 }
-export function updateCart(
+export async function updateCart(
   productId: string,
   variant: string,
   change: 'plus' | 'minus' | 'select' | 'remove',
-): DemoState {
+): Promise<DemoState> {
   const data = load()
   const item = data.cart.find((item) => item.productId === productId && item.variant === variant)
   if (!item) return getDemoState()
+  if (springMarketplaceEnabled) {
+    const target = { id: productId, variant, version: springCartVersion(data) }
+    if (change === 'remove') return mutate({ type: 'removeCartItem', ...target })
+    const quantity = item.quantity + (change === 'plus' ? 1 : change === 'minus' && item.quantity > 1 ? -1 : 0)
+    const selected = change === 'select' ? !item.selected : item.selected
+    return mutate({ type: 'saveCartItem', ...target, quantity, selected })
+  }
   if (change === 'remove') data.cart = data.cart.filter((entry) => entry !== item)
   else if (change === 'select') item.selected = !item.selected
   else if (change === 'minus') item.quantity = Math.max(1, item.quantity - 1)
@@ -902,7 +992,7 @@ export function pendingBuyCheckout(productId: string): DemoCheckout | undefined 
 }
 export function cartCheckoutIssue(state: DemoState): string {
   const chosen = state.cart.filter((item) => item.selected)
-  if (pendingCheckout('cart', chosen)) return ''
+  if (pendingCartCheckout() || pendingCheckout('cart', chosen)) return ''
   try {
     validateDemoStock(state.products, chosen)
     return ''
@@ -921,9 +1011,12 @@ function prepareCheckout(source: 'cart' | 'buy', items: DemoCheckoutLine[]): Dem
     items,
     recipient: { ...data.recipient },
     datasetId: data.marketplace?.datasetId,
+    ...(springMarketplaceEnabled && source === 'cart' ? { cartVersion: springCartVersion(data) } : {}),
   }
 }
 export function prepareCartCheckout(): DemoCheckout {
+  const pending = pendingCartCheckout()
+  if (pending) return pending
   const chosen = getDemoState()
     .cart.filter((item) => item.selected)
     .map((item) => ({ ...item }))
@@ -942,6 +1035,7 @@ export function prepareBuyCheckout(
 }
 export function checkoutCart(checkout = prepareCartCheckout()): Promise<DemoState> {
   return mutate(checkout, (data) => {
+    if (checkout.cartVersion !== undefined) return
     for (const bought of checkout.items) {
       const item = data.cart.find(
         (item) => item.productId === bought.productId && item.variant === bought.variant,

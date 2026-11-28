@@ -47,6 +47,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/auth/session").authenticated()
                         .requestMatchers("/api/v1/orders/**").hasRole("USER")
                         .requestMatchers("/api/v1/favorites/**").hasRole("USER")
+                        .requestMatchers("/api/v1/cart", "/api/v1/cart/**").hasRole("USER")
                         .requestMatchers("/api/v1/merchant/**").hasRole("MERCHANT")
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                         .anyRequest().denyAll();

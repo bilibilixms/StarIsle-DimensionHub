@@ -272,7 +272,7 @@ async function pay() {
           更新商品信息
         </button>
         <button
-          v-if="problem.includes('库存') || problem.includes('下架')"
+          v-if="problem.includes('库存') || problem.includes('下架') || problem.includes('购物车已更新')"
           class="adjust-button"
           @click="back"
         >

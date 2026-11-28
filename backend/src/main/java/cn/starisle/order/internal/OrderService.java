@@ -1,5 +1,6 @@
 package cn.starisle.order.internal;
 
+import cn.starisle.cart.api.CartService;
 import cn.starisle.catalog.api.InventoryService;
 import cn.starisle.catalog.api.InventoryService.ReservedItem;
 import cn.starisle.identity.internal.AccountService;
@@ -34,19 +35,22 @@ public class OrderService {
     private final ShopService shops;
     private final RefundService refunds;
     private final ObjectMapper json;
+    private final CartService cart;
 
     public OrderService(JdbcClient jdbc, InventoryService inventory, AccountService accounts,
-                        ShopService shops, RefundService refunds, ObjectMapper json) {
+                        ShopService shops, RefundService refunds, ObjectMapper json, CartService cart) {
         this.jdbc = jdbc;
         this.inventory = inventory;
         this.accounts = accounts;
         this.shops = shops;
         this.refunds = refunds;
         this.json = json;
+        this.cart = cart;
     }
 
     @Transactional
     public List<String> checkout(long buyerId, String operationKey, Checkout request) {
+        Long lockedCartVersion = request.cartVersion() == null ? null : cart.lock(buyerId);
         byte[] digest = Sha256.digest(json.writeValueAsBytes(request));
         jdbc.sql("""
                 INSERT INTO order_checkout (buyer_id, operation_key, payload_digest) VALUES (:buyer, :key, :digest)
@@ -62,6 +66,10 @@ public class OrderService {
                 .param("id", saved.id()).query((row, index) -> row.getString("id")).list();
         if (!existing.isEmpty()) return existing;
 
+        if (lockedCartVersion != null) {
+            cart.verifyCheckout(buyerId, lockedCartVersion, request.cartVersion(), request.items().stream()
+                    .map(item -> new CartService.Selection(item.productId(), item.skuId(), item.quantity())).toList());
+        }
         var items = inventory.reserve(request.items().stream().map(item -> new InventoryService.Line(
                 item.productId(), item.skuId(), item.quantity(), item.expectedPrice(), item.variantName())).toList());
         var grouped = items.stream().collect(Collectors.groupingBy(ReservedItem::shopId, LinkedHashMap::new,
@@ -97,6 +105,7 @@ public class OrderService {
             }
             ids.add(Long.toString(orderId));
         }
+        if (lockedCartVersion != null) cart.clearPurchased(buyerId);
         return ids;
     }
 

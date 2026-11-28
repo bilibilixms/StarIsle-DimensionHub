@@ -11,6 +11,7 @@ import {
 } from './demo-domain'
 import { springApiBase, springMediaUrl, springRequest } from './spring-api'
 import type { SpringAddressBook } from './spring-addresses'
+import type { DemoCartItem } from './demo'
 
 interface CatalogSku {
   id: string
@@ -89,6 +90,12 @@ interface Snapshot {
   reviews: DemoReviewView[]
   addressBook?: SpringAddressBook
   favoriteIds?: string[]
+  cart?: { version: number; items: (Omit<DemoCartItem, 'variant'> & { skuId: string })[] }
+}
+
+export interface SpringCart {
+  version: number
+  items: DemoCartItem[]
 }
 
 const fulfillmentStatuses = {
@@ -165,7 +172,7 @@ function order(entry: Order): DemoOrder {
 let snapshotRevision = 0
 export async function loadSpringMarketplace(
   token?: string,
-): Promise<{ state: DemoMarketplaceView; addressBook?: SpringAddressBook }> {
+): Promise<{ state: DemoMarketplaceView; addressBook?: SpringAddressBook; cart?: SpringCart }> {
   const revision = (snapshotRevision = Math.max(snapshotRevision + 1, Date.now()))
   const snapshot = await springRequest<Snapshot>('/marketplace', 'GET', token)
   const shops = snapshot.shops.map(
@@ -173,6 +180,10 @@ export async function loadSpringMarketplace(
   )
   return {
     addressBook: snapshot.addressBook,
+    cart: snapshot.cart && {
+      version: snapshot.cart.version,
+      items: snapshot.cart.items.map(({ skuId, ...item }) => ({ ...item, variant: skuId })),
+    },
     state: {
       version: 1,
       datasetId: springApiBase,

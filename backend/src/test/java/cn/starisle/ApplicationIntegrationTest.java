@@ -239,6 +239,72 @@ class ApplicationIntegrationTest {
     }
 
     @Test
+    void cartCheckoutVerifiesSelectionAndClearsPurchasedLinesExactlyOnce() throws Exception {
+        var merchant = register("13800000009", "merchant");
+        String seller = merchant.path("token").asString();
+        String buyer = register("13800000001", "user").path("token").asString();
+        String other = register("13800000002", "user").path("token").asString();
+        String admin = json.readTree(send("POST", "/api/v1/auth/login",
+                accountForm(ADMIN_PHONE, ADMIN_PASSWORD, "admin"), null).body()).path("data").path("token").asString();
+        var badge = publish(merchant, admin, "购物车联调徽章");
+        var card = publish(merchant, admin, "留在购物车的明信片");
+        String badgeId = badge.path("id").asString();
+        String cardId = card.path("id").asString();
+        String badgeSku = badge.path("skus").get(0).path("id").asString();
+        String cardSku = card.path("skus").get(0).path("id").asString();
+        String path = "/api/v1/cart";
+        String badgePath = path + "/items/" + badgeId + "/" + badgeSku;
+        String cardPath = path + "/items/" + cardId + "/" + cardSku;
+        assertThat(get(path).statusCode()).isEqualTo(401);
+        assertThat(send("GET", path, null, seller).statusCode()).isEqualTo(403);
+        assertThat(snapshot(null).has("cart")).isFalse();
+        assertThat(snapshot(seller).has("cart")).isFalse();
+        String add = "{\"quantity\":2,\"selected\":true,\"version\":0}";
+        assertThat(send("PUT", badgePath, add.replace(":2", ":4"), buyer).statusCode()).isEqualTo(409);
+        var added = send("PUT", badgePath, add, buyer);
+        assertThat(added.statusCode()).as(added.body()).isEqualTo(200);
+        assertThat(send("PUT", badgePath, add, buyer).statusCode()).isEqualTo(409);
+        assertThat(send("PUT", cardPath, "{\"quantity\":1,\"selected\":false,\"version\":1}", buyer).statusCode()).isEqualTo(200);
+        assertThat(snapshot(other).path("cart").path("items").size()).isZero();
+        var before = snapshot(buyer).path("cart");
+        assertThat(before.path("version").asLong()).isEqualTo(2);
+        assertThat(before.path("items").size()).isEqualTo(2);
+
+        String expected = checkoutForm(line(badge, 2));
+        String cartOrder = expected.strip().replaceFirst("}$", ",\"cartVersion\":2}");
+        assertThat(checkout(cartOrder.replace("\"cartVersion\":2", "\"cartVersion\":1"), buyer, "cart-stale-version").statusCode())
+                .isEqualTo(409);
+        assertThat(checkout(cartOrder.replace("\"quantity\":2", "\"quantity\":1"), buyer, "cart-wrong-quantity").statusCode())
+                .isEqualTo(409);
+        assertThat(checkout(cartOrder.replace("1990", "1980"), buyer, "cart-old-price").statusCode()).isEqualTo(409);
+        assertThat(stock(badge)).isEqualTo(3);
+        assertThat(snapshot(buyer).path("cart")).isEqualTo(before);
+        assertThat(checkout(checkoutForm(line(badge, 1)), buyer, "buy-with-cart").statusCode()).isEqualTo(200);
+        assertThat(snapshot(buyer).path("cart")).isEqualTo(before);
+
+        var first = checkout(cartOrder, buyer, "cart-order-confirmed");
+        assertThat(first.statusCode()).as(first.body()).isEqualTo(200);
+        assertThat(checkout(cartOrder, buyer, "cart-order-confirmed").body()).isEqualTo(first.body());
+        assertThat(checkout(cartOrder, buyer, "cart-order-new-key").statusCode()).isEqualTo(409);
+        assertThat(stock(badge)).isZero();
+        var remaining = snapshot(buyer).path("cart");
+        assertThat(remaining.path("version").asLong()).isEqualTo(3);
+        assertThat(remaining.path("items").size()).isEqualTo(1);
+        assertThat(remaining.path("items").get(0).path("productId").asString()).isEqualTo(cardId);
+        String importOld = "{\"items\":[{\"productId\":\"%s\",\"skuId\":\"%s\",\"quantity\":2,\"selected\":true}]}"
+                .formatted(badgeId, badgeSku);
+        assertThat(send("POST", path + "/import", importOld, buyer).statusCode()).isEqualTo(200);
+        assertThat(snapshot(buyer).path("cart")).isEqualTo(remaining);
+
+        String publication = "/api/v1/merchant/products/" + cardId + "/publication";
+        assertThat(send("PUT", publication, "{\"published\":false}", seller).statusCode()).isEqualTo(200);
+        assertThat(snapshot(buyer).path("cart").path("items").size()).isEqualTo(1);
+        assertThat(send("PUT", cardPath, "{\"quantity\":2,\"selected\":false,\"version\":3}", buyer).statusCode()).isEqualTo(409);
+        assertThat(send("DELETE", cardPath + "?version=3", null, buyer).statusCode()).isEqualTo(200);
+        assertThat(snapshot(buyer).path("cart").path("items").size()).isZero();
+    }
+
+    @Test
     void favoritesSyncForTheBuyerAndLegacyImportKeepsExplicitRemovals() throws Exception {
         String buyer = register("13800000001", "user").path("token").asString();
         String other = register("13800000002", "user").path("token").asString();

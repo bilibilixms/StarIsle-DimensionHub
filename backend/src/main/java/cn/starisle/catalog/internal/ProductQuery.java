@@ -8,6 +8,7 @@ import cn.starisle.shared.api.PageResult;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
@@ -19,10 +20,12 @@ import tools.jackson.databind.ObjectMapper;
 
 @Service
 public class ProductQuery implements ProductVisibility {
-    private static final String VISIBLE_PRODUCTS = """
-            FROM catalog_product p JOIN merchant_shop s ON s.id = p.shop_id
+    private static final String PRODUCTS_AND_SHOPS =
+            " FROM catalog_product p JOIN merchant_shop s ON s.id = p.shop_id ";
+    private static final String PUBLIC_STATUS = """
             WHERE p.status = 'PUBLISHED' AND s.status = 'ACTIVE'
             """;
+    private static final String VISIBLE_PRODUCTS = PRODUCTS_AND_SHOPS + PUBLIC_STATUS;
     private static final String SEARCH = " AND (:q = '' OR LOCATE(:q, p.title) > 0) ";
     private static final String DETAIL_COLUMNS = """
             SELECT p.id, p.shop_id, s.name AS shop_name, p.title, p.subtitle, p.description,
@@ -64,6 +67,14 @@ public class ProductQuery implements ProductVisibility {
         if (productIds.isEmpty()) return List.of();
         return jdbc.sql("SELECT p.id " + VISIBLE_PRODUCTS + " AND p.id IN (:ids) ORDER BY p.id")
                 .param("ids", productIds).query(Long.class).list();
+    }
+
+    @Override
+    public Optional<AvailableSku> visibleSku(long productId, long skuId) {
+        return jdbc.sql("SELECT p.title, sk.name, sk.stock " + PRODUCTS_AND_SHOPS
+                + "JOIN catalog_sku sk ON sk.product_id = p.id " + PUBLIC_STATUS
+                + " AND p.id = :product AND sk.id = :sku").param("product", productId).param("sku", skuId)
+                .query(AvailableSku.class).optional();
     }
 
     ProductDetail ownedDetail(long productId, long shopId) {

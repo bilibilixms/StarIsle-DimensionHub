@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
+import { springMarketplaceEnabled } from '@starisle/shared/auth'
 import {
   openCheckout,
   prepareCartCheckout,
@@ -9,8 +10,10 @@ import {
   variantPrice,
   variantName,
   variantStock,
+  productVariants,
   syncDemoState,
   cartCheckoutIssue,
+  pendingCartCheckout,
   stockMessage,
   LOW_STOCK_LIMIT,
   type DemoState,
@@ -19,6 +22,11 @@ import {
 const props = defineProps<{ state: DemoState }>()
 const emit = defineEmits<{ refresh: []; completed: []; browse: [] }>()
 const busy = ref(false)
+const editing = ref(false)
+const paymentPending = computed(() => {
+  void props.state
+  return !!pendingCartCheckout()
+})
 const checkoutIssue = computed(() => cartCheckoutIssue(props.state))
 function cartQuantity(productId: string, variant: string) {
   const product = props.state.products.find((product) => product.id === productId)
@@ -27,32 +35,43 @@ function cartQuantity(productId: string, variant: string) {
     .reduce((sum, item) => sum + item.quantity, 0)
 }
 const items = computed(() =>
-  props.state.cart
-    .map((item) => ({
+  props.state.cart.map((item) => {
+    const product = props.state.products.find((product) => product.id === item.productId)
+    const skuAvailable = !!product && productVariants(product).some((sku) => sku.id === item.variant)
+    return {
       ...item,
-      product: props.state.products.find((product) => product.id === item.productId)!,
-    }))
-    .filter((item) => item.product),
+      product,
+      price: product && skuAvailable ? variantPrice(product, item.variant) : undefined,
+      stock: product && skuAvailable ? variantStock(product, item.variant) : 0,
+      variantLabel: product && skuAvailable ? variantName(product, item.variant) : item.variantName,
+      unavailable: !product?.published ? '商品已下架' : !skuAvailable ? '规格已调整，请移除后重新选择' : '',
+    }
+  }),
 )
 const amount = computed(() =>
   items.value
     .filter((item) => item.selected)
-    .reduce((sum, item) => sum + variantPrice(item.product, item.variant) * item.quantity, 0),
+    .reduce((sum, item) => sum + (item.price ?? 0) * item.quantity, 0),
 )
 const selectedCount = computed(() =>
   items.value.filter((item) => item.selected).reduce((sum, item) => sum + item.quantity, 0),
 )
-function change(item: DemoCartItem, action: 'plus' | 'minus' | 'select' | 'remove') {
+async function change(item: DemoCartItem, action: 'plus' | 'minus' | 'select' | 'remove') {
+  if (editing.value || busy.value) return
+  editing.value = true
   try {
-    updateCart(item.productId, item.variant, action)
+    await updateCart(item.productId, item.variant, action)
     emit('refresh')
   } catch (error) {
     uni.showToast({ title: error instanceof Error ? error.message : '修改失败', icon: 'none' })
+  } finally {
+    editing.value = false
   }
 }
 async function checkout() {
-  if (busy.value) return
-  if (!selectedCount.value) return uni.showToast({ title: '请先选择商品', icon: 'none' })
+  if (busy.value || editing.value) return
+  if (!selectedCount.value && !paymentPending.value)
+    return uni.showToast({ title: '请先选择商品', icon: 'none' })
   busy.value = true
   let prepared
   try {
@@ -95,51 +114,46 @@ async function checkout() {
           class="select-item"
           :class="{ checked: item.selected }"
           aria-label="选择商品"
+          :aria-pressed="item.selected"
+          :disabled="busy || editing"
           @click="change(item, 'select')"
         >
           <Icon v-if="item.selected" name="check" tone="white" :size="12" />
         </button>
-        <image :src="item.product.cover" mode="aspectFill" class="cart-cover" />
+        <image v-if="item.product" :src="item.product.cover" mode="aspectFill" class="cart-cover" />
         <view class="cart-copy">
-          <text class="cart-title">{{ item.product.title }}</text>
-          <text class="cart-variant">
+          <text class="cart-title">{{ item.product?.title || item.title || '已下架商品' }}</text>
+          <text v-if="item.product" class="cart-variant">
             {{
-              state.shops.find((shop) => shop.id === (item.product.shopId || 'demo-shop'))?.name ||
+              state.shops.find((shop) => shop.id === (item.product?.shopId || 'demo-shop'))?.name ||
               state.shop.name
             }}
           </text>
-          <text class="cart-variant">{{ variantName(item.product, item.variant) }}</text>
+          <text v-if="item.variantLabel" class="cart-variant">{{ item.variantLabel }}</text>
           <text
             v-if="
-              !item.product.published ||
-              variantStock(item.product, item.variant) <= LOW_STOCK_LIMIT ||
-              cartQuantity(item.productId, item.variant) > variantStock(item.product, item.variant)
+              item.unavailable || item.stock <= LOW_STOCK_LIMIT ||
+              cartQuantity(item.productId, item.variant) > item.stock
             "
             class="stock-hint"
             :class="{
-              'stock-low': variantStock(item.product, item.variant) > 0,
-              'stock-empty': variantStock(item.product, item.variant) === 0,
+              'stock-low': item.stock > 0,
+              'stock-empty': item.stock === 0,
             }"
             data-testid="cart-stock"
           >
             {{
-              !item.product.published
-                ? '商品已下架'
-                : variantName(item.product, item.variant) === '规格已调整'
-                  ? '规格已调整，请移除后重新选择'
-                  : cartQuantity(item.productId, item.variant) >
-                        variantStock(item.product, item.variant) &&
-                      variantStock(item.product, item.variant) > 0
-                    ? `库存不足，仅剩 ${variantStock(item.product, item.variant)} 件，请调整数量`
-                    : stockMessage(variantStock(item.product, item.variant))
+              item.unavailable || (cartQuantity(item.productId, item.variant) > item.stock && item.stock > 0
+                ? `库存不足，仅剩 ${item.stock} 件，请调整数量`
+                : stockMessage(item.stock))
             }}
           </text>
           <view class="cart-bottom">
-            <text class="cart-price">¥{{ money(variantPrice(item.product, item.variant)) }}</text>
+            <text v-if="item.price !== undefined" class="cart-price">¥{{ money(item.price) }}</text>
             <view class="quantity-control">
               <button
                 aria-label="减少数量"
-                :disabled="busy || item.quantity <= 1"
+                :disabled="busy || editing || item.quantity <= 1"
                 @click="change(item, 'minus')"
               >
                 −
@@ -149,9 +163,9 @@ async function checkout() {
                 aria-label="增加数量"
                 :disabled="
                   busy ||
-                  !item.product.published ||
-                  cartQuantity(item.productId, item.variant) >=
-                    variantStock(item.product, item.variant)
+                  editing ||
+                  !!item.unavailable ||
+                  cartQuantity(item.productId, item.variant) >= item.stock
                 "
                 @click="change(item, 'plus')"
               >
@@ -159,7 +173,7 @@ async function checkout() {
               </button>
             </view>
           </view>
-          <button class="remove-item" aria-label="移除商品" @click="change(item, 'remove')">
+          <button class="remove-item" aria-label="移除商品" :disabled="busy || editing" @click="change(item, 'remove')">
             移除
           </button>
         </view>
@@ -174,23 +188,26 @@ async function checkout() {
         </view>
         <button
           class="primary-button checkout"
-          :disabled="busy || !!checkoutIssue || !selectedCount"
+          :disabled="busy || editing || (!paymentPending && (!!checkoutIssue || !selectedCount))"
           :loading="busy"
           data-testid="cart-checkout"
           @click="checkout"
         >
-          模拟结算（{{ selectedCount }}）
+          {{ paymentPending ? '确认上次支付结果' : `模拟结算（${selectedCount}）` }}
         </button>
       </view>
       <text class="form-note">
-        订单与商家端联动，购物车仅保存在本机。演示收货地址可在「我的」修改。
+        {{ springMarketplaceEnabled ? '购物车随账号同步。' : '购物车保存在本机。' }}演示收货地址可在「我的」修改。
       </text>
     </template>
     <view v-else class="empty-state">
       <Icon name="cart" tone="purple" :size="44" />
-      <text class="empty-title">口袋里还没有心动好物</text>
-      <text class="empty-copy">去岛上逛逛，把喜欢的带回来。</text>
-      <button class="primary-button" @click="$emit('browse')">去逛逛</button>
+      <text class="empty-title">{{ paymentPending ? '有一笔订单等待确认' : '口袋里还没有心动好物' }}</text>
+      <text v-if="!paymentPending" class="empty-copy">去岛上逛逛，把喜欢的带回来。</text>
+      <button v-if="paymentPending" class="primary-button" data-testid="cart-checkout" :disabled="busy" @click="checkout">
+        确认上次支付结果
+      </button>
+      <button v-else class="primary-button" @click="$emit('browse')">去逛逛</button>
     </view>
   </view>
 </template>
