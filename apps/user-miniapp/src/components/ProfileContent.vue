@@ -148,7 +148,7 @@ function allReviewed(order: DemoOrder) {
       <view class="section-heading-title">
         <text>{{ section === 'orders' ? '我的订单' : '心动收藏' }}</text>
       </view>
-      <text class="profile-list-note">与商家端同步</text>
+      <text v-if="section === 'orders'" class="profile-list-note">与商家端同步</text>
     </view>
     <template v-if="section === 'orders'">
       <view

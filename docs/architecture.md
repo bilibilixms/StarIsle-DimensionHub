@@ -71,6 +71,7 @@ flowchart LR
 | `POST /api/v1/orders/checkout` | 模拟支付并按店铺建单。使用 `X-Idempotency-Key` 重试时复用原订单，同一键绑定同一份请求。 |
 | `GET/POST /api/v1/orders/addresses`、`PUT/DELETE /api/v1/orders/addresses/{id}`、`PUT /api/v1/orders/addresses/{id}/default` | 买家管理本人的地址簿及默认地址。新增地址使用 `X-Idempotency-Key` 重试。已生成订单保留收货快照。 |
 | `POST /api/v1/orders/addresses/import` | 导入本机旧地址。相同地址重复导入时返回原记录，保留服务端已设的默认地址。 |
+| `PUT/DELETE /api/v1/favorites/{productId}`、`POST /api/v1/favorites/import` | 买家收藏、取消收藏和导入旧收藏。买家在联动数据中读取自己的可见收藏，旧设备导入时保留服务端已有的取消记录。 |
 | `POST /api/v1/merchant/orders/{id}/shipment`、`POST /api/v1/orders/{id}/receipt` | 商家记录物流，买家确认收货。 |
 | `POST /api/v1/orders/{id}/refunds` | 买家申请整单仅退款或退货退款，使用 `X-Idempotency-Key` 重试。 |
 | `POST /api/v1/orders/{id}/refunds/{refundId}/cancel` 和 `…/shipment` | 买家撤销售后或提交退货物流。 |
@@ -84,6 +85,7 @@ flowchart LR
 
 - 表结构由 Flyway 迁移脚本管理，已应用的脚本不修改，通过新版本继续迁移。
 - V1 创建店铺和商品表，V2 增加账号、角色、会话、店铺归属和规格。V3 为旧商品生成默认规格并补充目录字段，V4 增加结算记录、订单及订单项快照，V5 增加商品编辑版本及图片归属，V6 增加售后状态和历史记录，V7 增加订单明细评价和买家图片归属，V8 增加商品视频及店铺归属，V9 增加买家地址簿。测试数据在 Testcontainers 的临时数据库中单独准备。
+- V10 新增买家收藏关系，保存买家对商品的收藏和取消记录。
 - 商品价格与库存由数据库约束兜底。后续下单使用事务和带条件的库存更新，Redis 不承担库存或支付结果的唯一事实来源。
 - 模拟支付由后端计算订单金额和商品快照，使用结算请求的幂等键避免重复建单。模拟退款记录售后结果，整个流程不接入微信支付及支付回调。
 - Redis 先用于限流、临时状态和有实际收益的热点缓存，再按需要扩展。

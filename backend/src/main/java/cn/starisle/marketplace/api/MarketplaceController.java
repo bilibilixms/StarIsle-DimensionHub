@@ -2,6 +2,7 @@ package cn.starisle.marketplace.api;
 
 import cn.starisle.catalog.api.ProductDetail;
 import cn.starisle.catalog.internal.ProductQuery;
+import cn.starisle.favorite.api.FavoriteService;
 import cn.starisle.identity.api.CurrentAccount;
 import cn.starisle.order.api.AddressBook;
 import cn.starisle.order.api.OrderView;
@@ -30,14 +31,16 @@ public class MarketplaceController {
     private final OrderService orders;
     private final ReviewService reviews;
     private final BuyerAddresses addresses;
+    private final FavoriteService favorites;
 
     public MarketplaceController(ProductQuery products, ShopService shops, OrderService orders, ReviewService reviews,
-                                 BuyerAddresses addresses) {
+                                 BuyerAddresses addresses, FavoriteService favorites) {
         this.products = products;
         this.shops = shops;
         this.orders = orders;
         this.reviews = reviews;
         this.addresses = addresses;
+        this.favorites = favorites;
     }
 
     @GetMapping("/api/v1/marketplace")
@@ -52,15 +55,19 @@ public class MarketplaceController {
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "尚未开通店铺"));
             long shopId = Long.parseLong(shop.id());
             return ApiResponse.ok(new Snapshot(products.marketplace(shopId), List.of(shop), orders.marketplace(shopId, true),
-                    reviews.marketplace(null, shopId), null));
+                    reviews.marketplace(null, shopId), null, null));
         }
         Long buyerId = account != null && "user".equals(account.role()) ? account.id() : null;
         var purchases = buyerId == null ? List.<OrderView>of() : orders.marketplace(buyerId, false);
-        return ApiResponse.ok(new Snapshot(products.marketplace(null), shops.activeProfiles(), purchases,
-                reviews.marketplace(buyerId, null), buyerId == null ? null : addresses.book(buyerId)));
+        var catalog = products.marketplace(null);
+        var saved = buyerId == null ? null : favorites.savedIds(buyerId);
+        var favoriteIds = saved == null ? null : catalog.stream().map(ProductDetail::id).filter(saved::contains).toList();
+        return ApiResponse.ok(new Snapshot(catalog, shops.activeProfiles(), purchases,
+                reviews.marketplace(buyerId, null), buyerId == null ? null : addresses.book(buyerId), favoriteIds));
     }
 
     public record Snapshot(List<ProductDetail> products, List<ShopProfile> shops, List<OrderView> orders,
                            List<ReviewView> reviews,
-                           @JsonInclude(JsonInclude.Include.NON_NULL) AddressBook addressBook) {}
+                           @JsonInclude(JsonInclude.Include.NON_NULL) AddressBook addressBook,
+                           @JsonInclude(JsonInclude.Include.NON_NULL) List<String> favoriteIds) {}
 }

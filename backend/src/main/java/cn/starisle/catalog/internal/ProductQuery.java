@@ -3,10 +3,12 @@ package cn.starisle.catalog.internal;
 import cn.starisle.catalog.api.MerchantProduct;
 import cn.starisle.catalog.api.ProductDetail;
 import cn.starisle.catalog.api.ProductView;
+import cn.starisle.catalog.api.ProductVisibility;
 import cn.starisle.shared.api.PageResult;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -16,7 +18,7 @@ import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
-public class ProductQuery {
+public class ProductQuery implements ProductVisibility {
     private static final String VISIBLE_PRODUCTS = """
             FROM catalog_product p JOIN merchant_shop s ON s.id = p.shop_id
             WHERE p.status = 'PUBLISHED' AND s.status = 'ACTIVE'
@@ -55,6 +57,13 @@ public class ProductQuery {
         var row = jdbc.sql(DETAIL_COLUMNS + VISIBLE_PRODUCTS + " AND p.id = :id")
                 .param("id", productId).query(this::mapDetail).optional().orElseThrow(ProductQuery::notFound);
         return loadSkus(List.of(row)).getFirst();
+    }
+
+    @Override
+    public List<Long> visibleIds(Set<Long> productIds) {
+        if (productIds.isEmpty()) return List.of();
+        return jdbc.sql("SELECT p.id " + VISIBLE_PRODUCTS + " AND p.id IN (:ids) ORDER BY p.id")
+                .param("ids", productIds).query(Long.class).list();
     }
 
     ProductDetail ownedDetail(long productId, long shopId) {

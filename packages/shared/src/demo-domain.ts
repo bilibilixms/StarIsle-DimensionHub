@@ -190,7 +190,10 @@ export interface DemoMarketplace {
   shop: Omit<DemoShop, 'id'>
   shops?: DemoShop[]
 }
-export type DemoMarketplaceView = Omit<DemoMarketplace, 'reviews'> & { reviews?: DemoReviewView[] }
+export type DemoMarketplaceView = Omit<DemoMarketplace, 'reviews'> & {
+  reviews?: DemoReviewView[]
+  favoriteIds?: string[]
+}
 export interface DemoShop {
   id: string
   name: string

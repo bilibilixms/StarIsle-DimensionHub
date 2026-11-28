@@ -26,6 +26,7 @@ import {
 
 const { state, sync, syncError, connected, syncing } = useDemoSync()
 const busy = ref(false)
+const favoritePending = ref(false)
 const props = defineProps<{ id: string }>()
 const id = computed(() => props.id)
 const variant = ref('standard')
@@ -137,8 +138,16 @@ function back() {
   if (getCurrentPages().length > 1) uni.navigateBack()
   else uni.reLaunch({ url: '/pages/index/index' })
 }
-function toggle() {
-  state.value = toggleFavorite(id.value)
+async function toggle() {
+  if (favoritePending.value) return
+  favoritePending.value = true
+  try {
+    state.value = await toggleFavorite(id.value)
+  } catch (cause) {
+    uni.showToast({ title: cause instanceof Error ? cause.message : '收藏更新失败，请重试', icon: 'none' })
+  } finally {
+    favoritePending.value = false
+  }
 }
 function goCart() {
   if (!requireDemoLogin('user', '/pages/index/index?tab=cart')) return
@@ -367,6 +376,8 @@ function share() {
       <view class="purchase-bar">
         <button
           class="purchase-small"
+          :disabled="favoritePending"
+          :aria-pressed="favorite"
           :aria-label="favorite ? '取消收藏' : '收藏商品'"
           data-testid="detail-favorite"
           @click="toggle"

@@ -88,6 +88,7 @@ interface Snapshot {
   orders: Order[]
   reviews: DemoReviewView[]
   addressBook?: SpringAddressBook
+  favoriteIds?: string[]
 }
 
 const fulfillmentStatuses = {
@@ -180,6 +181,7 @@ export async function loadSpringMarketplace(
       shop: shops[0] || { name: '星屿', description: '' },
       products: snapshot.products.map(product),
       orders: snapshot.orders.map(order),
+      favoriteIds: snapshot.favoriteIds,
       reviews: (snapshot.reviews || []).map((review) => ({
         ...review,
         images: review.images.map(springMediaUrl),

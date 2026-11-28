@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import Icon from '@starisle/ui/Icon.vue'
 import {
   money,
@@ -10,12 +11,21 @@ import {
 } from '@starisle/shared/demo'
 defineProps<{ products: DemoProduct[]; favorites: string[] }>()
 const emit = defineEmits<{ refresh: []; tag: [value: string] }>()
+const pendingFavorites = ref(new Set<string>())
 function open(id: string) {
   uni.navigateTo({ url: `/pages/product/detail?id=${encodeURIComponent(id)}` })
 }
-function favorite(id: string) {
-  toggleFavorite(id)
-  emit('refresh')
+async function favorite(id: string) {
+  if (pendingFavorites.value.has(id)) return
+  pendingFavorites.value.add(id)
+  try {
+    await toggleFavorite(id)
+    emit('refresh')
+  } catch (cause) {
+    uni.showToast({ title: cause instanceof Error ? cause.message : '收藏更新失败，请重试', icon: 'none' })
+  } finally {
+    pendingFavorites.value.delete(id)
+  }
 }
 </script>
 
@@ -71,6 +81,8 @@ function favorite(id: string) {
       </view>
       <button
         class="favorite-button"
+        :disabled="pendingFavorites.has(product.id)"
+        :aria-pressed="favorites.includes(product.id)"
         :aria-label="favorites.includes(product.id) ? '取消收藏' : '收藏商品'"
         :data-testid="`favorite-${product.id}`"
         @click.stop="favorite(product.id)"

@@ -239,6 +239,52 @@ class ApplicationIntegrationTest {
     }
 
     @Test
+    void favoritesSyncForTheBuyerAndLegacyImportKeepsExplicitRemovals() throws Exception {
+        String buyer = register("13800000001", "user").path("token").asString();
+        String other = register("13800000002", "user").path("token").asString();
+        var merchant = register("13800000009", "merchant");
+        String seller = merchant.path("token").asString();
+        String path = "/api/v1/favorites";
+        String badge = "9007199254740993";
+        assertThat(send("PUT", path + "/" + badge, null, null).statusCode()).isEqualTo(401);
+        assertThat(send("PUT", path + "/" + badge, null, seller).statusCode()).isEqualTo(403);
+        assertThat(send("PUT", path + "/2", null, buyer).statusCode()).isEqualTo(404);
+        assertThat(send("PUT", path + "/3", null, buyer).statusCode()).isEqualTo(404);
+        assertThat(send("PUT", path + "/0", null, buyer).statusCode()).isEqualTo(400);
+        assertThat(send("PUT", path + "/" + badge, null, buyer).statusCode()).isEqualTo(200);
+        assertThat(send("PUT", path + "/" + badge, null, buyer).statusCode()).isEqualTo(200);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM buyer_favorite").query(Integer.class).single()).isEqualTo(1);
+        assertThat(snapshot(buyer).path("favoriteIds").get(0).asString()).isEqualTo(badge);
+        assertThat(snapshot(other).path("favoriteIds").size()).isZero();
+        assertThat(snapshot(null).has("favoriteIds")).isFalse();
+        assertThat(snapshot(seller).has("favoriteIds")).isFalse();
+
+        assertThat(send("DELETE", path + "/" + badge, null, other).statusCode()).isEqualTo(200);
+        assertThat(snapshot(buyer).path("favoriteIds").get(0).asString()).isEqualTo(badge);
+        assertThat(send("DELETE", path + "/" + badge, null, buyer).statusCode()).isEqualTo(200);
+        assertThat(send("DELETE", path + "/" + badge, null, buyer).statusCode()).isEqualTo(200);
+        assertThat(send("POST", path + "/import", "{\"productIds\":[\"4.5\"]}", buyer).statusCode()).isEqualTo(400);
+        String legacy = """
+                {"productIds":["9007199254740993","2","3","4","4","99"]}
+                """;
+        assertThat(send("POST", path + "/import", legacy, buyer).statusCode()).isEqualTo(200);
+        assertThat(send("POST", path + "/import", legacy, buyer).statusCode()).isEqualTo(200);
+        assertThat(snapshot(buyer).path("favoriteIds").toString()).isEqualTo("[\"4\"]");
+        assertThat(send("PUT", path + "/" + badge, null, buyer).statusCode()).isEqualTo(200);
+        assertThat(snapshot(buyer).path("favoriteIds").size()).isEqualTo(2);
+
+        String admin = json.readTree(send("POST", "/api/v1/auth/login",
+                accountForm(ADMIN_PHONE, ADMIN_PASSWORD, "admin"), null).body()).path("data").path("token").asString();
+        String productId = publish(merchant, admin, "收藏下架测试").path("id").asString();
+        String publication = "/api/v1/merchant/products/" + productId + "/publication";
+        assertThat(send("PUT", path + "/" + productId, null, buyer).statusCode()).isEqualTo(200);
+        assertThat(send("PUT", publication, "{\"published\":false}", seller).statusCode()).isEqualTo(200);
+        assertThat(snapshot(buyer).path("favoriteIds").toString()).doesNotContain(productId);
+        assertThat(send("PUT", publication, "{\"published\":true}", seller).statusCode()).isEqualTo(200);
+        assertThat(snapshot(buyer).path("favoriteIds").toString()).contains(productId);
+    }
+
+    @Test
     void shopOwnerCanEditPublicProfileWithoutChangingExistingOrdersOrApproval() throws Exception {
         var merchant = register("13800000009", "merchant");
         var other = register("13800000008", "merchant");

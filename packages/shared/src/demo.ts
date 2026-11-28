@@ -193,7 +193,7 @@ function merge(
     data.marketplace = marketplace
     const ids = new Set(marketplace.products.map((product) => product.id))
     data.cart = data.cart.filter((item) => ids.has(item.productId))
-    data.favorites = data.favorites.filter((id) => ids.has(id))
+    data.favorites = (marketplace.favoriteIds ?? data.favorites).filter((id) => ids.has(id))
   }
   if (addressBook) applyAddressBook(data, addressBook)
   return save(data, storageKey, role)
@@ -266,6 +266,7 @@ async function requestSpring(
   try {
     if (role === 'user' && session?.role === 'user') {
       await migrateLocalAddresses(storageKey, session.token)
+      await migrateLocalFavorites(storageKey, session.token)
     }
     const orderIds = command ? await sendSpringCommand(command, token, operationId) : undefined
     completed = !!command
@@ -288,6 +289,9 @@ async function sendSpringCommand(command: DemoCommand, token?: string, operation
         name: command.name,
         description: command.description,
       })
+      return
+    case 'setFavorite':
+      await springRequest(`/favorites/${id}`, command.favorite ? 'PUT' : 'DELETE', token)
       return
     case 'createProduct':
     case 'editProduct': {
@@ -439,12 +443,35 @@ async function execute(
     throw error
   }
 }
-export function toggleFavorite(id: string): DemoState {
-  if (!requireDemoLogin('user', `/pages/product/detail?id=${id}`)) return getDemoState()
+const favoriteMigrations = new Map<string, Promise<void>>()
+function migrateLocalFavorites(storageKey: string, token: string): Promise<void> | undefined {
+  const previous = favoriteMigrations.get(storageKey)
+  if (previous) return previous
+  const data = load(storageKey)
+  if (data.marketplace?.favoriteIds !== undefined) return
+  const productIds = [
+    ...new Set(data.favorites.filter(
+      (id) => /^[1-9]\d{0,18}$/.test(id) && (id.length < 19 || id <= '9223372036854775807'),
+    )),
+  ]
+  if (!productIds.length) return
+  const migrate = (async () => {
+    for (let start = 0; start < productIds.length; start += 100) {
+      await springRequest('/favorites/import', 'POST', token, {
+        productIds: productIds.slice(start, start + 100),
+      })
+    }
+  })().finally(() => favoriteMigrations.delete(storageKey))
+  favoriteMigrations.set(storageKey, migrate)
+  return migrate
+}
+
+export async function toggleFavorite(id: string): Promise<DemoState> {
+  if (!requireDemoLogin('user', `/pages/product/detail?id=${encodeURIComponent(id)}`)) return getDemoState()
   const data = load()
-  data.favorites = data.favorites.includes(id)
-    ? data.favorites.filter((item) => item !== id)
-    : [...data.favorites, id]
+  const saved = data.favorites.includes(id)
+  if (springMarketplaceEnabled) return mutate({ type: 'setFavorite', id, favorite: !saved })
+  data.favorites = saved ? data.favorites.filter((item) => item !== id) : [...data.favorites, id]
   return save(data)
 }
 export async function editDemoRecipient(
